@@ -2,7 +2,7 @@
 
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 import discord
 import psycopg2
@@ -97,9 +97,15 @@ class ReflexBot(commands.Bot):
             raise ValueError("DISCORD_REFLEX_CHANNEL_ID environment variable not set")
 
         # Initialize Postgres connection
+        try:
+            postgres_port = int(os.getenv("POSTGRES_PORT", "5432"))
+        except ValueError:
+            logger.warning(f"Invalid POSTGRES_PORT, using default 5432")
+            postgres_port = 5432
+
         self.pg_conn = psycopg2.connect(
             host=os.getenv("POSTGRES_HOST", "10.5.2.21"),
-            port=int(os.getenv("POSTGRES_PORT", "5432")),
+            port=postgres_port,
             dbname=os.getenv("POSTGRES_DB", "cortex"),
             user=os.getenv("POSTGRES_USER", "cortex"),
             password=os.getenv("POSTGRES_PASSWORD"),
@@ -125,12 +131,27 @@ class ReflexBot(commands.Bot):
         litellm_url = os.getenv("LITELLM_BASE_URL", "http://ares.evilsoft:4000")
         tier1_model = os.getenv("REFLEX_LLM_TIER1_MODEL", "ollama/qwen2.5:7b")
         tier2_model = os.getenv("REFLEX_LLM_TIER2_MODEL", "gemini/gemini-1.5-flash")
-        tier1_threshold = float(
-            os.getenv("REFLEX_LLM_TIER1_CONFIDENCE_THRESHOLD", "0.7")
-        )
-        tier2_threshold = float(
-            os.getenv("REFLEX_LLM_TIER2_CONFIDENCE_THRESHOLD", "0.6")
-        )
+
+        # Parse thresholds with error handling
+        try:
+            tier1_threshold = float(
+                os.getenv("REFLEX_LLM_TIER1_CONFIDENCE_THRESHOLD", "0.7")
+            )
+        except ValueError:
+            logger.warning(
+                f"Invalid REFLEX_LLM_TIER1_CONFIDENCE_THRESHOLD, using default 0.7"
+            )
+            tier1_threshold = 0.7
+
+        try:
+            tier2_threshold = float(
+                os.getenv("REFLEX_LLM_TIER2_CONFIDENCE_THRESHOLD", "0.6")
+            )
+        except ValueError:
+            logger.warning(
+                f"Invalid REFLEX_LLM_TIER2_CONFIDENCE_THRESHOLD, using default 0.6"
+            )
+            tier2_threshold = 0.6
 
         self.classifier = ReflexClassifier(
             litellm_url, tier1_model, tier2_model, tier1_threshold, tier2_threshold
@@ -260,8 +281,8 @@ class ReflexBot(commands.Bot):
             llm_model=result.model,
             llm_reasoning=result.reasoning,
             status="active",
-            captured_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            captured_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
             exported_to_git=False,
             git_commit_sha=None,
             markdown_path=None,

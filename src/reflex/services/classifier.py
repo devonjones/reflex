@@ -85,6 +85,8 @@ class ReflexClassifier:
         Raises:
             LLMError: If both tiers fail
         """
+        is_command: bool = False
+        confidence: float = 0.0
         # Try Tier 1
         try:
             is_command, confidence = self._validate_intent_single(
@@ -124,14 +126,6 @@ class ReflexClassifier:
         prompt = INTENT_VALIDATION_PROMPT.format(message=message)
 
         try:
-            # Use classify method which returns JSON
-            category, confidence, _ = self.llm.classify(prompt, model)
-            # Parse the response - category will be the JSON string
-            # Actually, we need to get the raw response. Let me check the client again.
-            # The classify method expects specific format. Let me use a custom call instead.
-
-            # Actually, looking at the client, classify expects category/confidence/reasoning
-            # For intent validation, we need a custom JSON parse. Let me make a helper.
             result = self.llm._post_completion(
                 model=model,
                 prompt=prompt,
@@ -167,6 +161,7 @@ class ReflexClassifier:
         Raises:
             LLMError: If both tiers fail
         """
+        result: Optional[ClassificationResult] = None
         # Try Tier 1
         try:
             result = self._classify_single(message, self.tier1_model)
@@ -180,9 +175,10 @@ class ReflexClassifier:
             # Continue to tier 2
 
         # Escalate to Tier 2
-        logger.info(
-            f"Classification tier 1 confidence {result.confidence:.2f} < {self.tier1_threshold}, escalating"
-        )
+        if result:
+            logger.info(
+                f"Classification tier 1 confidence {result.confidence:.2f} < {self.tier1_threshold}, escalating"
+            )
         result = self._classify_single(message, self.tier2_model)
         logger.info(
             f"Classification tier 2: {result.category} (confidence={result.confidence})"

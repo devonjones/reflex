@@ -44,7 +44,7 @@ class PostgresStorage:
         Raises:
             Exception: If storage fails
         """
-        # Insert into Postgres
+        # Insert into Postgres (don't commit yet - wait for DuckDB)
         with self.conn.cursor() as cur:
             cur.execute(
                 """
@@ -78,9 +78,8 @@ class PostgresStorage:
                 ),
             )
             entry_id = cur.fetchone()[0]
-            self.conn.commit()
 
-        logger.info(f"Stored entry {entry_id} in Postgres")
+        logger.info(f"Inserted entry {entry_id} in Postgres (not committed yet)")
 
         # Store body in DuckDB via API
         try:
@@ -90,6 +89,10 @@ class PostgresStorage:
             # Rollback Postgres insert
             self.conn.rollback()
             raise
+
+        # Both operations succeeded - commit the transaction
+        self.conn.commit()
+        logger.info(f"Committed entry {entry_id} to Postgres")
 
         return entry_id
 
