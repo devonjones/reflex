@@ -3,6 +3,7 @@
 import os
 import re
 from datetime import datetime, timezone
+from typing import Optional
 
 import discord
 import psycopg2
@@ -136,6 +137,7 @@ class ReflexBot(commands.Bot):
         # Initialize markdown exporter
         git_repo_path = os.getenv("REFLEX_GIT_REPO_PATH")
         git_remote = os.getenv("REFLEX_GIT_REMOTE")
+        self.exporter: Optional[MarkdownExporter]
         if git_repo_path:
             self.exporter = MarkdownExporter(git_repo_path, git_remote)
             logger.info(f"Markdown exporter initialized: {git_repo_path}")

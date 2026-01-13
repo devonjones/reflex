@@ -59,9 +59,10 @@ class MarkdownExporter:
         """
         # Entry must have captured_at for export
         assert entry.captured_at is not None, "Entry must have captured_at for export"
+        captured_at = entry.captured_at  # Narrow type for mypy
 
         # Generate filename
-        date_str = entry.captured_at.strftime("%Y-%m-%d")
+        date_str = captured_at.strftime("%Y-%m-%d")
         slug = slugify(entry.title, max_length=50)
         filename = f"{date_str}-{slug}.md"
 
@@ -99,7 +100,7 @@ id: {entry.id}
 discord_message_id: "{entry.discord_message_id}"
 category: {entry.category}
 tags: [{', '.join(entry.tags) if entry.tags else ''}]
-captured_at: {entry.captured_at.isoformat()}
+captured_at: {captured_at.isoformat()}
 llm_model: {entry.llm_model}
 llm_confidence: {entry.llm_confidence}
 status: {entry.status}
