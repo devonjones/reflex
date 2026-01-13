@@ -85,7 +85,7 @@ def generate_title(message: str, max_length: int = 80) -> str:
 class ReflexBot(commands.Bot):
     """Discord bot for Reflex."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize bot."""
         intents = discord.Intents.default()
         intents.message_content = True  # Required to read messages
@@ -187,7 +187,8 @@ class ReflexBot(commands.Bot):
 
     async def on_ready(self) -> None:
         """Called when bot is ready."""
-        logger.info(f"Bot ready: {self.user} (ID: {self.user.id})")
+        if self.user:
+            logger.info(f"Bot ready: {self.user} (ID: {self.user.id})")
         logger.info(f"Listening on channel ID: {self.reflex_channel_id}")
 
     async def on_message(self, message: discord.Message) -> None:
@@ -339,7 +340,7 @@ class ReflexBot(commands.Bot):
             f"*Reasoning: {result.reasoning}*"
         )
 
-    async def on_error(self, event_method: str, *args, **kwargs) -> None:
+    async def on_error(self, event_method: str, *args: object, **kwargs: object) -> None:
         """Handle errors in event handlers.
 
         Args:

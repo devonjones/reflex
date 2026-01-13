@@ -57,6 +57,9 @@ class MarkdownExporter:
         Returns:
             Path to exported file (relative to repo root)
         """
+        # Entry must have captured_at for export
+        assert entry.captured_at is not None, "Entry must have captured_at for export"
+
         # Generate filename
         date_str = entry.captured_at.strftime("%Y-%m-%d")
         slug = slugify(entry.title, max_length=50)

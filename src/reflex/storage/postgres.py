@@ -76,9 +76,12 @@ class PostgresStorage:
                     entry.status,
                 ),
             )
-            entry_id = cur.fetchone()[0]
+            entry_id: int = cur.fetchone()[0]
 
         logger.info(f"Inserted entry {entry_id} in Postgres (not committed yet)")
+
+        # Entry must have original_message for storage
+        assert entry.original_message is not None, "Entry must have original_message for storage"
 
         # Store body in DuckDB via API
         try:
