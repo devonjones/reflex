@@ -97,6 +97,22 @@ class ReflexBot(commands.Bot):
             raise ValueError("DISCORD_REFLEX_CHANNEL_ID environment variable not set")
 
         # Initialize Postgres connection
+        postgres_host = os.getenv("POSTGRES_HOST")
+        if not postgres_host:
+            raise ValueError("POSTGRES_HOST environment variable not set")
+
+        postgres_db = os.getenv("POSTGRES_DB")
+        if not postgres_db:
+            raise ValueError("POSTGRES_DB environment variable not set")
+
+        postgres_user = os.getenv("POSTGRES_USER")
+        if not postgres_user:
+            raise ValueError("POSTGRES_USER environment variable not set")
+
+        postgres_password = os.getenv("POSTGRES_PASSWORD")
+        if not postgres_password:
+            raise ValueError("POSTGRES_PASSWORD environment variable not set")
+
         try:
             postgres_port = int(os.getenv("POSTGRES_PORT", "5432"))
         except ValueError:
@@ -104,15 +120,17 @@ class ReflexBot(commands.Bot):
             postgres_port = 5432
 
         self.pg_conn = psycopg2.connect(
-            host=os.getenv("POSTGRES_HOST", "10.5.2.21"),
+            host=postgres_host,
             port=postgres_port,
-            dbname=os.getenv("POSTGRES_DB", "cortex"),
-            user=os.getenv("POSTGRES_USER", "cortex"),
-            password=os.getenv("POSTGRES_PASSWORD"),
+            dbname=postgres_db,
+            user=postgres_user,
+            password=postgres_password,
         )
 
         # Initialize storage
-        duckdb_api_url = os.getenv("DUCKDB_API_URL", "http://cortex-duckdb-api:8081")
+        duckdb_api_url = os.getenv("DUCKDB_API_URL")
+        if not duckdb_api_url:
+            raise ValueError("DUCKDB_API_URL environment variable not set")
         self.storage = PostgresStorage(self.pg_conn, duckdb_api_url)
 
         # Initialize markdown exporter
@@ -128,9 +146,17 @@ class ReflexBot(commands.Bot):
             )
 
         # Initialize classifier
-        litellm_url = os.getenv("LITELLM_BASE_URL", "http://ares.evilsoft:4000")
-        tier1_model = os.getenv("REFLEX_LLM_TIER1_MODEL", "ollama/qwen2.5:7b")
-        tier2_model = os.getenv("REFLEX_LLM_TIER2_MODEL", "gemini/gemini-1.5-flash")
+        litellm_url = os.getenv("LITELLM_BASE_URL")
+        if not litellm_url:
+            raise ValueError("LITELLM_BASE_URL environment variable not set")
+
+        tier1_model = os.getenv("REFLEX_LLM_TIER1_MODEL")
+        if not tier1_model:
+            raise ValueError("REFLEX_LLM_TIER1_MODEL environment variable not set")
+
+        tier2_model = os.getenv("REFLEX_LLM_TIER2_MODEL")
+        if not tier2_model:
+            raise ValueError("REFLEX_LLM_TIER2_MODEL environment variable not set")
 
         # Parse thresholds with error handling
         try:
@@ -194,7 +220,7 @@ class ReflexBot(commands.Bot):
             ERRORS.labels(service="reflex", error_type="message_handler").inc()
             await message.add_reaction("❌")
             await message.reply(
-                f"Sorry, something went wrong: {e}\n\nPlease try again or contact support."
+                "Sorry, something went wrong. Please try again or contact support."
             )
 
     async def handle_potential_command(self, message: discord.Message) -> None:
@@ -281,8 +307,6 @@ class ReflexBot(commands.Bot):
             llm_model=result.model,
             llm_reasoning=result.reasoning,
             status="active",
-            captured_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
             exported_to_git=False,
             git_commit_sha=None,
             markdown_path=None,

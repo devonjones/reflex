@@ -20,12 +20,12 @@ class Entry:
     llm_model: str
     llm_reasoning: Optional[str]
     status: str
-    captured_at: datetime
-    updated_at: datetime
-    exported_to_git: bool
-    git_commit_sha: Optional[str]
-    markdown_path: Optional[str]
-    original_message: str  # For DuckDB storage
+    captured_at: Optional[datetime] = None  # Let DB handle via DEFAULT NOW()
+    updated_at: Optional[datetime] = None  # Let DB handle via trigger
+    exported_to_git: bool = False
+    git_commit_sha: Optional[str] = None
+    markdown_path: Optional[str] = None
+    original_message: Optional[str] = None  # For DuckDB storage, None if fetch failed
 
 
 @dataclass

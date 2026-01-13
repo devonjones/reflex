@@ -45,6 +45,7 @@ class PostgresStorage:
             Exception: If storage fails
         """
         # Insert into Postgres (don't commit yet - wait for DuckDB)
+        # Note: captured_at and updated_at use DB defaults (NOW() and trigger)
         with self.conn.cursor() as cur:
             cur.execute(
                 """
@@ -58,9 +59,8 @@ class PostgresStorage:
                     llm_confidence,
                     llm_model,
                     llm_reasoning,
-                    status,
-                    captured_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    status
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -74,7 +74,6 @@ class PostgresStorage:
                     entry.llm_model,
                     entry.llm_reasoning,
                     entry.status,
-                    entry.captured_at,
                 ),
             )
             entry_id = cur.fetchone()[0]
@@ -152,8 +151,9 @@ class PostgresStorage:
             # Decode base64 body_data
             original_message = base64.b64decode(body_data["body_data"]).decode("utf-8")
         except Exception as e:
-            logger.warning(f"Failed to fetch body for entry {entry_id}: {e}")
-            original_message = ""
+            logger.error(f"Failed to fetch body for entry {entry_id}: {e}")
+            # Return None to explicitly signal failure rather than silently returning empty string
+            original_message = None
 
         return Entry(
             id=row["id"],
@@ -180,13 +180,16 @@ class PostgresStorage:
     ) -> list[Entry]:
         """Get recent entries from a channel.
 
+        Note: original_message is not fetched to avoid N+1 queries.
+        Use get_entry() to fetch individual entries with full message content.
+
         Args:
             channel_id: Discord channel ID
             limit: Maximum number of entries to return
             category: Optional category filter
 
         Returns:
-            List of entries (most recent first)
+            List of entries (most recent first, original_message will be None)
         """
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             if category:
@@ -234,7 +237,7 @@ class PostgresStorage:
                     exported_to_git=row["exported_to_git"],
                     git_commit_sha=row["git_commit_sha"],
                     markdown_path=row["markdown_path"],
-                    original_message="",  # Not fetched in list queries
+                    original_message=None,  # Not fetched in list queries (see docstring)
                 )
             )
 
