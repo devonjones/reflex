@@ -94,6 +94,10 @@ class MarkdownExporter:
         Returns:
             Markdown string
         """
+        # Entry must have captured_at for export
+        assert entry.captured_at is not None, "Entry must have captured_at for export"
+        captured_at = entry.captured_at  # Narrow type for mypy
+
         # YAML frontmatter
         frontmatter = f"""---
 id: {entry.id}
