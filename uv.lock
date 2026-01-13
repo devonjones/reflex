@@ -372,7 +372,7 @@ wheels = [
 [[package]]
 name = "cortex-utils"
 version = "0.1.0"
-source = { directory = "../utils" }
+source = { git = "https://github.com/devonjones/cortex-utils.git?rev=3c8a9d4#3c8a9d4bc6586115540febff5fd00e20b82a1aad" }
 dependencies = [
     { name = "click" },
     { name = "docker" },
@@ -384,28 +384,6 @@ dependencies = [
     { name = "schedule" },
     { name = "structlog" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "black", marker = "extra == 'dev'", specifier = ">=24.0.0" },
-    { name = "click", specifier = ">=8.1.0" },
-    { name = "docker", specifier = ">=7.0.0" },
-    { name = "flask", marker = "extra == 'api'", specifier = ">=3.0.0" },
-    { name = "gunicorn", marker = "extra == 'api'", specifier = ">=21.0.0" },
-    { name = "httpx", specifier = ">=0.27.0" },
-    { name = "isort", marker = "extra == 'dev'", specifier = ">=5.13.0" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
-    { name = "prometheus-client", specifier = ">=0.20.0" },
-    { name = "psycopg2-binary", specifier = ">=2.9.0" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0" },
-    { name = "schedule", specifier = ">=1.2.0" },
-    { name = "structlog", specifier = ">=24.0.0" },
-]
-provides-extras = ["api", "dev"]
 
 [[package]]
 name = "discord-py"
@@ -1315,7 +1293,7 @@ dev = [
 requires-dist = [
     { name = "apscheduler", specifier = ">=3.10.4" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.11.0" },
-    { name = "cortex-utils", directory = "../utils" },
+    { name = "cortex-utils", git = "https://github.com/devonjones/cortex-utils.git?rev=3c8a9d4" },
     { name = "discord-py", specifier = ">=2.3.0" },
     { name = "gitpython", specifier = ">=3.1.40" },
     { name = "httpx", specifier = ">=0.27.0" },

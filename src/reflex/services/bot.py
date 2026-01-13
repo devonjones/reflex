@@ -269,7 +269,7 @@ class ReflexBot(commands.Bot):
         logger.info(f"Handling capture: {message.id}")
 
         # Classify with two-tier cascade
-        with PROCESSING_DURATION.labels(operation="classify").time():
+        with PROCESSING_DURATION.labels(queue="reflex", operation="classify").time():
             result = self.classifier.classify(message.content)
 
         LLM_CONFIDENCE.labels(model=result.model).observe(result.confidence)
@@ -317,7 +317,7 @@ class ReflexBot(commands.Bot):
         )
 
         # Store in database
-        with PROCESSING_DURATION.labels(operation="store").time():
+        with PROCESSING_DURATION.labels(queue="reflex", operation="store").time():
             entry_id = self.storage.store_entry(entry)
 
         CAPTURES_TOTAL.labels(category=result.category).inc()
@@ -329,7 +329,7 @@ class ReflexBot(commands.Bot):
 
         # Export to markdown (async, non-blocking)
         if self.exporter:
-            with PROCESSING_DURATION.labels(operation="export").time():
+            with PROCESSING_DURATION.labels(queue="reflex", operation="export").time():
                 self.exporter.export_and_commit_async(entry)
             logger.info(f"Triggered async markdown export for entry {entry_id}")
 
