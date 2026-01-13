@@ -297,6 +297,9 @@ class ReflexBot(commands.Bot):
         # Generate title
         title = generate_title(message.content)
 
+        # Capture timestamp
+        now = datetime.now(timezone.utc)
+
         # Create entry
         entry = Entry(
             id=None,
@@ -310,6 +313,8 @@ class ReflexBot(commands.Bot):
             llm_model=result.model,
             llm_reasoning=result.reasoning,
             status="active",
+            captured_at=now,
+            updated_at=now,
             exported_to_git=False,
             git_commit_sha=None,
             markdown_path=None,

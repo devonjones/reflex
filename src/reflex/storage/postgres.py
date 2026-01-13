@@ -45,7 +45,7 @@ class PostgresStorage:
             Exception: If storage fails
         """
         # Insert into Postgres (don't commit yet - wait for DuckDB)
-        # Note: captured_at and updated_at use DB defaults (NOW() and trigger)
+        # Note: updated_at uses DB trigger, captured_at is set by caller or DB default
         with self.conn.cursor() as cur:
             cur.execute(
                 """
@@ -59,8 +59,9 @@ class PostgresStorage:
                     llm_confidence,
                     llm_model,
                     llm_reasoning,
-                    status
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    status,
+                    captured_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -74,6 +75,7 @@ class PostgresStorage:
                     entry.llm_model,
                     entry.llm_reasoning,
                     entry.status,
+                    entry.captured_at,
                 ),
             )
             entry_id: int = cur.fetchone()[0]
