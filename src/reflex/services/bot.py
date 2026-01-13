@@ -13,6 +13,7 @@ from prometheus_client import Counter, Histogram
 
 from reflex.models.entry import Entry
 from reflex.services.classifier import ReflexClassifier
+from reflex.storage.exporter import MarkdownExporter
 from reflex.storage.postgres import PostgresStorage
 
 # Configure logging
@@ -37,6 +38,12 @@ LLM_CONFIDENCE = Histogram(
     "LLM confidence scores",
     ["model"],
     buckets=[0.0, 0.3, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1.0],
+)
+
+EXPORTS_TOTAL = Counter(
+    "reflex_exports_total",
+    "Total markdown exports",
+    ["status"],
 )
 
 
@@ -101,6 +108,18 @@ class ReflexBot(commands.Bot):
         # Initialize storage
         duckdb_api_url = os.getenv("DUCKDB_API_URL", "http://cortex-duckdb-api:8081")
         self.storage = PostgresStorage(self.pg_conn, duckdb_api_url)
+
+        # Initialize markdown exporter
+        git_repo_path = os.getenv("REFLEX_GIT_REPO_PATH")
+        git_remote = os.getenv("REFLEX_GIT_REMOTE")
+        if git_repo_path:
+            self.exporter = MarkdownExporter(git_repo_path, git_remote)
+            logger.info(f"Markdown exporter initialized: {git_repo_path}")
+        else:
+            self.exporter = None
+            logger.warning(
+                "REFLEX_GIT_REPO_PATH not set, markdown export disabled"
+            )
 
         # Initialize classifier
         litellm_url = os.getenv("LITELLM_BASE_URL", "http://ares.evilsoft:4000")
@@ -256,6 +275,15 @@ class ReflexBot(commands.Bot):
         CAPTURES_TOTAL.labels(category=result.category).inc()
 
         logger.info(f"Stored entry {entry_id}")
+
+        # Update entry with ID
+        entry.id = entry_id
+
+        # Export to markdown (async, non-blocking)
+        if self.exporter:
+            with PROCESSING_DURATION.labels(operation="export").time():
+                self.exporter.export_and_commit_async(entry)
+            logger.info(f"Triggered async markdown export for entry {entry_id}")
 
         # Send confirmation
         await message.add_reaction("✅")
