@@ -22,7 +22,7 @@ CLASSIFICATION_PROMPT = """Classify this note into one category:
 
 Note: "{message}"
 
-Return JSON:
+Return JSON (use English only for all fields):
 {{
   "category": "...",
   "confidence": 0.0-1.0,
