@@ -12,7 +12,7 @@ dependencies = [
     "PyYAML>=6.0.1",
     "python-slugify>=8.0.1",
     "GitPython>=3.1.40",
-    "cortex-utils @ file:///home/devon/Projects/cortex/utils",
+    "cortex-utils @ git+https://github.com/devonjones/cortex-utils.git@3c8a9d4",
 ]
 
 [project.optional-dependencies]
@@ -45,6 +45,22 @@ python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "cortex_utils.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "discord.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "git.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "slugify"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
