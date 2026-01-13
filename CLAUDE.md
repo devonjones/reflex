@@ -97,7 +97,7 @@ uv run black src tests
 
 ## Git Workflow
 
-**NEVER push directly to main.** Always:
+**NEVER push directly to main.** All changes must be submitted via a pull request, following this workflow:
 
 1. Create a feature branch
 2. Make changes and commit
