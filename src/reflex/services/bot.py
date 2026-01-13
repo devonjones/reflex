@@ -1,0 +1,297 @@
+"""Discord bot for Reflex knowledge capture."""
+
+import os
+import re
+from datetime import datetime
+
+import discord
+import psycopg2
+from cortex_utils.logging import configure_logging, get_logger
+from cortex_utils.metrics import ERRORS, PROCESSING_DURATION, start_metrics_server
+from discord.ext import commands
+from prometheus_client import Counter, Histogram
+
+from reflex.models.entry import Entry
+from reflex.services.classifier import ReflexClassifier
+from reflex.storage.postgres import PostgresStorage
+
+# Configure logging
+configure_logging("reflex", level=os.getenv("LOG_LEVEL", "INFO"))
+logger = get_logger(__name__)
+
+# Metrics
+CAPTURES_TOTAL = Counter(
+    "reflex_captures_total",
+    "Total number of captures",
+    ["category"],
+)
+
+CLASSIFICATION_DURATION = Histogram(
+    "reflex_classification_duration_seconds",
+    "Time spent classifying",
+    ["tier"],
+)
+
+LLM_CONFIDENCE = Histogram(
+    "reflex_llm_confidence",
+    "LLM confidence scores",
+    ["model"],
+    buckets=[0.0, 0.3, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1.0],
+)
+
+
+def looks_like_command(message: str) -> bool:
+    """Heuristic check if message looks like a command.
+
+    Args:
+        message: Message text
+
+    Returns:
+        True if message looks like a command
+    """
+    patterns = [
+        r"^(move|tag|archive|delete|show|update)\s+(that|this|the\s+last|recent)",
+        r"^(what|show\s+me|find|search)",
+    ]
+    return any(re.match(p, message.lower()) for p in patterns)
+
+
+def generate_title(message: str, max_length: int = 80) -> str:
+    """Generate a title from message.
+
+    Args:
+        message: Original message
+        max_length: Maximum title length
+
+    Returns:
+        Title string
+    """
+    # Use first line or sentence
+    first_line = message.split("\n")[0]
+    if len(first_line) <= max_length:
+        return first_line
+
+    # Truncate to max length
+    return first_line[:max_length - 3] + "..."
+
+
+class ReflexBot(commands.Bot):
+    """Discord bot for Reflex."""
+
+    def __init__(self):
+        """Initialize bot."""
+        intents = discord.Intents.default()
+        intents.message_content = True  # Required to read messages
+        super().__init__(command_prefix="!", intents=intents)
+
+        # Configuration from environment
+        self.reflex_channel_id = os.getenv("DISCORD_REFLEX_CHANNEL_ID")
+        if not self.reflex_channel_id:
+            raise ValueError("DISCORD_REFLEX_CHANNEL_ID environment variable not set")
+
+        # Initialize Postgres connection
+        self.pg_conn = psycopg2.connect(
+            host=os.getenv("POSTGRES_HOST", "10.5.2.21"),
+            port=int(os.getenv("POSTGRES_PORT", "5432")),
+            dbname=os.getenv("POSTGRES_DB", "cortex"),
+            user=os.getenv("POSTGRES_USER", "cortex"),
+            password=os.getenv("POSTGRES_PASSWORD"),
+        )
+
+        # Initialize storage
+        duckdb_api_url = os.getenv("DUCKDB_API_URL", "http://cortex-duckdb-api:8081")
+        self.storage = PostgresStorage(self.pg_conn, duckdb_api_url)
+
+        # Initialize classifier
+        litellm_url = os.getenv("LITELLM_BASE_URL", "http://ares.evilsoft:4000")
+        tier1_model = os.getenv("REFLEX_LLM_TIER1_MODEL", "ollama/qwen2.5:7b")
+        tier2_model = os.getenv("REFLEX_LLM_TIER2_MODEL", "gemini/gemini-1.5-flash")
+        tier1_threshold = float(
+            os.getenv("REFLEX_LLM_TIER1_CONFIDENCE_THRESHOLD", "0.7")
+        )
+        tier2_threshold = float(
+            os.getenv("REFLEX_LLM_TIER2_CONFIDENCE_THRESHOLD", "0.6")
+        )
+
+        self.classifier = ReflexClassifier(
+            litellm_url, tier1_model, tier2_model, tier1_threshold, tier2_threshold
+        )
+
+        logger.info("ReflexBot initialized")
+
+    async def on_ready(self) -> None:
+        """Called when bot is ready."""
+        logger.info(f"Bot ready: {self.user} (ID: {self.user.id})")
+        logger.info(f"Listening on channel ID: {self.reflex_channel_id}")
+
+    async def on_message(self, message: discord.Message) -> None:
+        """Handle incoming messages.
+
+        Args:
+            message: Discord message
+        """
+        # Ignore bot's own messages
+        if message.author == self.user:
+            return
+
+        # Only listen to reflex channel
+        if str(message.channel.id) != self.reflex_channel_id:
+            return
+
+        logger.info(
+            f"Received message: {message.id} from {message.author} in {message.channel}"
+        )
+
+        try:
+            # Check if it looks like a command
+            if looks_like_command(message.content):
+                await self.handle_potential_command(message)
+            else:
+                await self.handle_capture(message)
+
+        except Exception as e:
+            logger.error(f"Error handling message {message.id}: {e}", exc_info=True)
+            ERRORS.labels(service="reflex", error_type="message_handler").inc()
+            await message.add_reaction("❌")
+            await message.reply(
+                f"Sorry, something went wrong: {e}\n\nPlease try again or contact support."
+            )
+
+    async def handle_potential_command(self, message: discord.Message) -> None:
+        """Handle potential command (validate intent first).
+
+        Args:
+            message: Discord message
+        """
+        logger.info(f"Message looks like command, validating intent: {message.id}")
+
+        try:
+            # Validate intent with two-tier cascade
+            is_command, confidence = self.classifier.validate_intent(message.content)
+
+            if is_command and confidence >= self.classifier.tier2_threshold:
+                # It's a command
+                logger.info(
+                    f"Confirmed command (confidence={confidence}): {message.content}"
+                )
+                await message.reply(
+                    f"Command detected (confidence: {confidence:.2f})\n\n"
+                    "⚠️ Command execution not yet implemented. Coming in Phase 3!"
+                )
+            else:
+                # False positive - treat as capture
+                logger.info(
+                    f"Not a command (confidence={confidence}), treating as capture"
+                )
+                await self.handle_capture(message)
+
+        except Exception as e:
+            logger.error(f"Intent validation failed: {e}", exc_info=True)
+            ERRORS.labels(service="reflex", error_type="intent_validation").inc()
+            # Fall back to treating as capture
+            await self.handle_capture(message)
+
+    async def handle_capture(self, message: discord.Message) -> None:
+        """Handle message capture (classify and store).
+
+        Args:
+            message: Discord message
+        """
+        logger.info(f"Handling capture: {message.id}")
+
+        # Classify with two-tier cascade
+        with PROCESSING_DURATION.labels(operation="classify").time():
+            result = self.classifier.classify(message.content)
+
+        LLM_CONFIDENCE.labels(model=result.model).observe(result.confidence)
+
+        logger.info(
+            f"Classified as {result.category} (confidence={result.confidence}, model={result.model})"
+        )
+
+        # Check if confidence is too low
+        if result.confidence < self.classifier.tier2_threshold:
+            logger.warning(
+                f"Low confidence ({result.confidence}) even after tier 2, asking user"
+            )
+            await message.reply(
+                f"I'm not sure how to classify this (confidence: {result.confidence:.2f}).\n\n"
+                f"Please add a prefix to help me:\n"
+                f"- `person:` for information about people\n"
+                f"- `project:` for work on projects\n"
+                f"- `idea:` for thoughts and inspirations\n"
+                f"- `admin:` for tasks and errands\n"
+                f"- `inbox:` for external content to review"
+            )
+            return
+
+        # Generate title
+        title = generate_title(message.content)
+
+        # Create entry
+        entry = Entry(
+            id=None,
+            discord_message_id=str(message.id),
+            discord_channel_id=str(message.channel.id),
+            discord_user_id=str(message.author.id),
+            category=result.category,
+            title=title,
+            tags=result.suggested_tags,
+            llm_confidence=result.confidence,
+            llm_model=result.model,
+            llm_reasoning=result.reasoning,
+            status="active",
+            captured_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+            exported_to_git=False,
+            git_commit_sha=None,
+            markdown_path=None,
+            original_message=message.content,
+        )
+
+        # Store in database
+        with PROCESSING_DURATION.labels(operation="store").time():
+            entry_id = self.storage.store_entry(entry)
+
+        CAPTURES_TOTAL.labels(category=result.category).inc()
+
+        logger.info(f"Stored entry {entry_id}")
+
+        # Send confirmation
+        await message.add_reaction("✅")
+        await message.reply(
+            f"**Filed as {result.category}** - {title}\n"
+            f"*Confidence: {result.confidence:.2f}*\n"
+            f"*Tags: {', '.join(result.suggested_tags) if result.suggested_tags else 'none'}*\n"
+            f"*Reasoning: {result.reasoning}*"
+        )
+
+    async def on_error(self, event_method: str, *args, **kwargs) -> None:
+        """Handle errors in event handlers.
+
+        Args:
+            event_method: Name of event method that errored
+        """
+        logger.error(f"Error in {event_method}", exc_info=True)
+        ERRORS.labels(service="reflex", error_type="discord_event").inc()
+
+
+def main() -> None:
+    """Main entry point."""
+    # Start metrics server
+    metrics_port = int(os.getenv("METRICS_PORT", "8096"))
+    start_metrics_server(port=metrics_port)
+    logger.info(f"Metrics server started on port {metrics_port}")
+
+    # Get bot token
+    bot_token = os.getenv("DISCORD_BOT_TOKEN")
+    if not bot_token:
+        raise ValueError("DISCORD_BOT_TOKEN environment variable not set")
+
+    # Create and run bot
+    bot = ReflexBot()
+    bot.run(bot_token)
+
+
+if __name__ == "__main__":
+    main()
