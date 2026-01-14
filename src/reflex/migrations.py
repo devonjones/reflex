@@ -63,7 +63,7 @@ MIGRATIONS = {
 }
 
 
-def migrate_entry(entry: Entry, target_version: str, storage, exporter=None, classifier=None) -> None:  # type: ignore
+def migrate_entry(entry: Entry, target_version: str, storage, exporter=None) -> None:  # type: ignore
     """Apply all migrations from entry.bot_version to target_version.
 
     Migrations are applied sequentially in version order. After each migration,
@@ -74,7 +74,6 @@ def migrate_entry(entry: Entry, target_version: str, storage, exporter=None, cla
         target_version: Version to migrate to (usually BOT_VERSION)
         storage: PostgresStorage instance for updating the entry
         exporter: MarkdownExporter instance for re-exporting (optional)
-        classifier: ReflexClassifier instance for re-classification (optional, needed for some migrations)
 
     Raises:
         Exception: If migration fails
@@ -102,11 +101,7 @@ def migrate_entry(entry: Entry, target_version: str, storage, exporter=None, cla
 
         try:
             # Apply migration
-            # TODO: Make this more elegant - some migrations need classifier, some don't
-            if version == "1.2.0" and classifier:
-                migration_func(entry, classifier)
-            else:
-                migration_func(entry)
+            migration_func(entry)
 
             # Update version after successful migration
             entry.bot_version = version

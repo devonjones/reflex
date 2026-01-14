@@ -243,7 +243,6 @@ class ReflexBot(commands.Bot):
                             BOT_VERSION,
                             self.storage,
                             self.exporter,
-                            self.classifier,
                         )
                         MIGRATIONS_COMPLETED.inc()
                     except Exception as e:
