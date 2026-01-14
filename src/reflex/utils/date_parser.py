@@ -78,6 +78,9 @@ def parse_snooze_date(date_str: str, reference_time: Optional[datetime] = None) 
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
 
-        return parsed
+        return parsed  # type: ignore[no-any-return]
     except (ValueError, dateutil_parser.ParserError):
+        return None
+    except Exception:
+        # Catch any other parsing errors
         return None

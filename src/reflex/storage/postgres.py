@@ -370,7 +370,7 @@ class PostgresStorage:
 
         return entries
 
-    def get_digest_entries(self) -> list[tuple]:
+    def get_digest_entries(self) -> list[tuple[int, str, str, list[str], datetime, Optional[datetime]]]:
         """Get entries for digest display.
 
         Returns entries where status='active' AND (next_action_date IS NULL OR <= NOW()),
@@ -391,4 +391,4 @@ class PostgresStorage:
             )
             rows = cur.fetchall()
 
-        return rows
+        return rows  # type: ignore[no-any-return]

@@ -681,9 +681,18 @@ class ReflexBot(commands.Bot):
 
         try:
             # Get channel
+            if not self.reflex_channel_id:
+                logger.error("DISCORD_REFLEX_CHANNEL_ID not configured")
+                return
+
             channel = self.get_channel(int(self.reflex_channel_id))
             if not channel:
                 logger.error(f"Could not find channel {self.reflex_channel_id}")
+                return
+
+            # Type narrow to ensure it's a text-based channel
+            if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+                logger.error(f"Channel {self.reflex_channel_id} is not a text channel")
                 return
 
             # Query entries WHERE next_action_date IS NULL OR next_action_date <= NOW()
@@ -762,7 +771,7 @@ async def webhook_digest_handler(request: web.Request) -> web.Response:
         return web.Response(status=401, text="Unauthorized")
 
     token = auth_header.replace("Bearer ", "")
-    if not hmac.compare_digest(token, bot.webhook_token):
+    if not bot.webhook_token or not hmac.compare_digest(token, bot.webhook_token):
         logger.warning("Webhook request with invalid token")
         return web.Response(status=401, text="Unauthorized")
 
