@@ -226,8 +226,8 @@ class ReflexBot(commands.Bot):
             litellm_url, tier1_model, tier2_model, tier1_threshold, tier2_threshold
         )
 
-        # State tracking for snooze prompts: (digest_message_id, user_id) -> (set of entry IDs, digest_message_id)
-        self.snooze_pending: dict[tuple[int, int], tuple[set[int], int]] = {}
+        # State tracking for snooze prompts: (snooze_prompt_id, user_id) -> (entry_id, digest_message_id)
+        self.snooze_pending: dict[tuple[int, int], tuple[int, int]] = {}
 
         # Track digest message_id -> entry_id for reaction handling
         self.digest_message_to_entry: dict[int, int] = {}
@@ -594,9 +594,9 @@ class ReflexBot(commands.Bot):
             "- `jan 20` or `2026-01-20`"
         )
 
-        # Store pending snooze state (for this single entry) + digest message ID for cleanup
+        # Store pending snooze state (entry_id + digest message ID for cleanup)
         key = (snooze_msg.id, user.id)
-        self.snooze_pending[key] = ({entry_id}, reaction.message.id)
+        self.snooze_pending[key] = (entry_id, reaction.message.id)
         logger.info(f"Waiting for snooze date from {user} for entry {entry_id}")
 
     async def handle_snooze_reply(
@@ -608,7 +608,7 @@ class ReflexBot(commands.Bot):
             message: User's reply message
             key: (snooze_prompt_message_id, user_id) tuple
         """
-        entry_ids, digest_message_id = self.snooze_pending[key]
+        entry_id, digest_message_id = self.snooze_pending[key]
         date_str = message.content.strip()
 
         # Parse the date
@@ -625,15 +625,15 @@ class ReflexBot(commands.Bot):
             )
             return
 
-        # Update entries
+        # Update entry
         with self.pg_conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE reflex_entries
                 SET next_action_date = %s
-                WHERE id = ANY(%s)
+                WHERE id = %s
                 """,
-                (snooze_until, list(entry_ids)),
+                (snooze_until, entry_id),
             )
         self.pg_conn.commit()
 
@@ -644,11 +644,7 @@ class ReflexBot(commands.Bot):
         # Clear pending state
         del self.snooze_pending[key]
 
-        entry_count = len(entry_ids)
-        entry_word = "entry" if entry_count == 1 else "entries"
-        logger.info(
-            f"Snoozed {entry_count} {entry_word} until {snooze_until.date()} for user {message.author}"
-        )
+        logger.info(f"Snoozed entry {entry_id} until {snooze_until.date()} for user {message.author}")
         await message.reply(
             f"✅ Got it! I'll remind you on **{snooze_until.strftime('%B %d, %Y')}**"
         )

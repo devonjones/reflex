@@ -52,7 +52,7 @@ def migrate_to_1_3_0(entry: Entry) -> None:
 
     The SQL migration (003_add_actionable.sql) already added the column with DEFAULT FALSE.
     Set actionable=true for admin/project categories (typically tasks/work).
-    Other categories (person, idea, inbox) default to false (reference material).
+    Other categories (person, idea, inbox) already have default false from SQL.
 
     Args:
         entry: Entry to migrate
@@ -61,9 +61,7 @@ def migrate_to_1_3_0(entry: Entry) -> None:
     if entry.category in ("admin", "project"):
         entry.actionable = True
         logger.info(f"Migrated entry {entry.id} to 1.3.0 (actionable=true for {entry.category})")
-    else:
-        entry.actionable = False
-        logger.info(f"Migrated entry {entry.id} to 1.3.0 (actionable=false for {entry.category})")
+    # else: Default is already false from SQL migration
 
 
 # Migration registry: version -> migration function
