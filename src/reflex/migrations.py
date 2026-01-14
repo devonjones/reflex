@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Current bot version
-BOT_VERSION = "1.2.0"
+BOT_VERSION = "1.3.0"
 
 
 def migrate_to_1_1_0(entry: Entry) -> None:
@@ -47,11 +47,31 @@ def migrate_to_1_2_0(entry: Entry) -> None:
     logger.info(f"Migrated entry {entry.id} to 1.2.0 (next_action_date field added)")
 
 
+def migrate_to_1_3_0(entry: Entry) -> None:
+    """Migration to version 1.3.0: Add actionable field.
+
+    The SQL migration (003_add_actionable.sql) already added the column with DEFAULT FALSE.
+    Set actionable=true for admin/project categories (typically tasks/work).
+    Other categories (person, idea, inbox) default to false (reference material).
+
+    Args:
+        entry: Entry to migrate
+    """
+    # Classify existing entries based on category
+    if entry.category in ("admin", "project"):
+        entry.actionable = True
+        logger.info(f"Migrated entry {entry.id} to 1.3.0 (actionable=true for {entry.category})")
+    else:
+        entry.actionable = False
+        logger.info(f"Migrated entry {entry.id} to 1.3.0 (actionable=false for {entry.category})")
+
+
 # Migration registry: version -> migration function
 # Migrations are applied sequentially in version order
 MIGRATIONS = {
     "1.1.0": migrate_to_1_1_0,
     "1.2.0": migrate_to_1_2_0,
+    "1.3.0": migrate_to_1_3_0,
 }
 
 

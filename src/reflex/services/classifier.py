@@ -20,6 +20,10 @@ CLASSIFICATION_PROMPT = """Classify this note into one category:
 - **admin**: Task, errand, administrative matter
 - **inbox**: External idea needing review (bookmark, article)
 
+Also determine if this note is **actionable** (requires user action):
+- **actionable=true**: Tasks, reminders, errands, todos, things that need doing
+- **actionable=false**: Reference information, ideas for later, notes about people
+
 Note: "{message}"
 
 Return JSON (use English only for all fields):
@@ -27,7 +31,8 @@ Return JSON (use English only for all fields):
   "category": "...",
   "confidence": 0.0-1.0,
   "reasoning": "brief explanation",
-  "suggested_tags": ["tag1", "tag2"]
+  "suggested_tags": ["tag1", "tag2"],
+  "actionable": true|false
 }}
 """
 
@@ -225,12 +230,15 @@ class ReflexClassifier:
             if not isinstance(suggested_tags, list):
                 suggested_tags = []
 
+            actionable = bool(data.get("actionable", False))
+
             return ClassificationResult(
                 category=category,
                 confidence=confidence,
                 reasoning=reasoning,
                 suggested_tags=suggested_tags,
                 model=model,
+                actionable=actionable,
             )
 
         except json.JSONDecodeError as e:

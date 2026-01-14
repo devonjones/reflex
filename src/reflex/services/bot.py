@@ -420,6 +420,7 @@ class ReflexBot(commands.Bot):
             markdown_path=None,
             original_message=message.content,
             bot_version=BOT_VERSION,
+            actionable=result.actionable,
         )
 
         # Store in database
