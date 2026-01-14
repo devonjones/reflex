@@ -112,6 +112,17 @@ def generate_title(message: str, max_length: int = 80) -> str:
 class ReflexBot(commands.Bot):
     """Discord bot for Reflex."""
 
+    # Digest constants
+    DIGEST_CATEGORY_EMOJIS = {
+        "person": "👤",
+        "project": "📋",
+        "idea": "💡",
+        "admin": "📌",
+        "inbox": "📥",
+    }
+    DIGEST_CATEGORY_ORDER = ["project", "admin", "person", "idea", "inbox"]
+    DIGEST_REACTION_EMOJIS = ["✅", "⏰", "📅", "🕐", "🔁"]
+
     def __init__(self) -> None:
         """Initialize bot."""
         intents = discord.Intents.default()
@@ -470,27 +481,45 @@ class ReflexBot(commands.Bot):
         )
 
         try:
-            if emoji == "✅":
-                # Mark as done (archive all entries)
-                await self.handle_archive_all(reaction, user)
-            elif emoji == "⏰":
-                # Snooze 1 week
-                await self.handle_snooze_fixed(reaction, user, days=7, label="1 week")
-            elif emoji == "📅":
-                # Snooze 1 month
-                await self.handle_snooze_fixed(reaction, user, days=30, label="1 month")
-            elif emoji == "🕐":
-                # Custom delay - prompt for date
-                await self.handle_snooze_request(reaction, user)
-            elif emoji == "🔁":
-                # Refresh digest
+            # Special case: refresh digest has different signature
+            if emoji == "🔁":
                 await self.generate_digest()
+                return
+
+            # Dispatcher pattern for other emoji reactions
+            handler_map = {
+                "✅": self.handle_archive_all,
+                "⏰": lambda r, u: self.handle_snooze_fixed(r, u, days=7, label="1 week"),
+                "📅": lambda r, u: self.handle_snooze_fixed(r, u, days=30, label="1 month"),
+                "🕐": self.handle_snooze_request,
+            }
+
+            handler = handler_map.get(emoji)
+            if handler:
+                await handler(reaction, user)
             else:
                 logger.debug(f"Ignoring unknown emoji: {emoji}")
 
         except Exception as e:
             logger.error(f"Error handling reaction {emoji}: {e}", exc_info=True)
             ERRORS.labels(service="reflex", error_type="reaction_handler").inc()
+
+    def _get_current_digest_entry_ids(self) -> list[int]:
+        """Get IDs of all entries that would appear in current digest.
+
+        Returns:
+            List of entry IDs where status='active' AND (next_action_date IS NULL OR <= NOW())
+        """
+        with self.pg_conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id FROM reflex_entries
+                WHERE status = 'active'
+                  AND (next_action_date IS NULL OR next_action_date <= NOW())
+                """
+            )
+            rows = cur.fetchall()
+        return [row[0] for row in rows]
 
     async def handle_archive_all(
         self, reaction: discord.Reaction, user: discord.User
@@ -501,23 +530,14 @@ class ReflexBot(commands.Bot):
             reaction: Discord reaction
             user: User who reacted
         """
-        # Query all active entries (same query as digest)
-        with self.pg_conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id FROM reflex_entries
-                WHERE status = 'active'
-                  AND (next_action_date IS NULL OR next_action_date <= NOW())
-                """
-            )
-            rows = cur.fetchall()
+        # Get all active entries (same query as digest)
+        entry_ids = self._get_current_digest_entry_ids()
 
-        if not rows:
+        if not entry_ids:
             await reaction.message.reply(f"{user.mention} - No entries to archive.")
             return
 
         # Update all to archived
-        entry_ids = [row[0] for row in rows]
         with self.pg_conn.cursor() as cur:
             cur.execute(
                 """
@@ -531,7 +551,7 @@ class ReflexBot(commands.Bot):
 
         logger.info(f"Archived {len(entry_ids)} entries via digest reaction")
         await reaction.message.reply(
-            f"{user.mention} - ✅ Archived {len(entry_ids)} entries!"
+            f"{user.mention} - Archived {len(entry_ids)} entries!"
         )
 
     async def handle_snooze_fixed(
@@ -545,23 +565,14 @@ class ReflexBot(commands.Bot):
             days: Number of days to snooze
             label: Human-readable label (e.g., "1 week", "1 month")
         """
-        # Query all active entries
-        with self.pg_conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id FROM reflex_entries
-                WHERE status = 'active'
-                  AND (next_action_date IS NULL OR next_action_date <= NOW())
-                """
-            )
-            rows = cur.fetchall()
+        # Get all active entries
+        entry_ids = self._get_current_digest_entry_ids()
 
-        if not rows:
+        if not entry_ids:
             await reaction.message.reply(f"{user.mention} - No entries to snooze.")
             return
 
         # Set next_action_date
-        entry_ids = [row[0] for row in rows]
         snooze_until = datetime.now(timezone.utc) + timedelta(days=days)
 
         with self.pg_conn.cursor() as cur:
@@ -590,22 +601,14 @@ class ReflexBot(commands.Bot):
             reaction: Discord reaction
             user: User who reacted
         """
-        # Query all active entries that would be in digest
-        with self.pg_conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id FROM reflex_entries
-                WHERE status = 'active'
-                  AND (next_action_date IS NULL OR next_action_date <= NOW())
-                """
-            )
-            rows = cur.fetchall()
+        # Get all active entries that would be in digest
+        entry_ids_list = self._get_current_digest_entry_ids()
 
-        if not rows:
+        if not entry_ids_list:
             await reaction.message.reply(f"{user.mention} - No entries to snooze.")
             return
 
-        entry_ids = {row[0] for row in rows}
+        entry_ids = set(entry_ids_list)
 
         # Send snooze prompt
         snooze_msg = await reaction.message.reply(
@@ -700,23 +703,15 @@ class ReflexBot(commands.Bot):
                 by_category[category].append(row)
 
             # Build digest message
-            category_emojis = {
-                "person": "👤",
-                "project": "📋",
-                "idea": "💡",
-                "admin": "📌",
-                "inbox": "📥",
-            }
-
             digest_parts = ["## Daily Digest\n"]
             digest_parts.append(f"**{len(rows)} entries ready for action**\n")
 
-            for category in ["project", "admin", "person", "idea", "inbox"]:
+            for category in self.DIGEST_CATEGORY_ORDER:
                 if category not in by_category:
                     continue
 
                 entries = by_category[category]
-                emoji = category_emojis.get(category, "📝")
+                emoji = self.DIGEST_CATEGORY_EMOJIS.get(category, "📝")
                 digest_parts.append(f"\n### {emoji} {category.title()} ({len(entries)})\n")
 
                 for row in entries[:5]:  # Show max 5 per category
@@ -739,7 +734,7 @@ class ReflexBot(commands.Bot):
             sent_message = await channel.send(digest_message)
 
             # Add reaction options
-            for emoji in ["✅", "⏰", "📅", "🕐", "🔁"]:
+            for emoji in self.DIGEST_REACTION_EMOJIS:
                 await sent_message.add_reaction(emoji)
 
             logger.info(f"Sent digest with {len(rows)} entries (message ID: {sent_message.id})")
