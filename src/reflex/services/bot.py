@@ -8,6 +8,7 @@ from typing import Optional
 
 import discord
 import psycopg2
+from aiohttp import web
 from cortex_utils.logging import configure_logging, get_logger
 from cortex_utils.metrics import ERRORS, PROCESSING_DURATION, start_metrics_server
 from discord.ext import commands
@@ -119,6 +120,10 @@ class ReflexBot(commands.Bot):
         self.reflex_channel_id = os.getenv("DISCORD_REFLEX_CHANNEL_ID")
         if not self.reflex_channel_id:
             raise ValueError("DISCORD_REFLEX_CHANNEL_ID environment variable not set")
+
+        self.webhook_token = os.getenv("REFLEX_WEBHOOK_TOKEN")
+        if not self.webhook_token:
+            raise ValueError("REFLEX_WEBHOOK_TOKEN environment variable not set")
 
         # Initialize Postgres connection
         postgres_host = os.getenv("POSTGRES_HOST")
@@ -423,6 +428,203 @@ class ReflexBot(commands.Bot):
         logger.error(f"Error in {event_method}", exc_info=True)
         ERRORS.labels(service="reflex", error_type="discord_event").inc()
 
+    async def on_reaction_add(
+        self, reaction: discord.Reaction, user: discord.User
+    ) -> None:
+        """Handle emoji reactions on digest messages.
+
+        Args:
+            reaction: Discord reaction
+            user: User who added the reaction
+        """
+        # Ignore bot's own reactions
+        if user == self.user:
+            return
+
+        # Only handle reactions in reflex channel
+        if str(reaction.message.channel.id) != self.reflex_channel_id:
+            return
+
+        # Only handle reactions on bot's messages (digest messages)
+        if reaction.message.author != self.user:
+            return
+
+        emoji = str(reaction.emoji)
+        logger.info(
+            f"Reaction {emoji} from {user} on message {reaction.message.id}"
+        )
+
+        try:
+            if emoji == "✅":
+                # Mark as done (archive) - not implemented yet
+                await reaction.message.reply(
+                    f"{user.mention} - ✅ Mark as done not yet implemented. "
+                    "This will archive entries."
+                )
+            elif emoji == "⏰":
+                # Snooze - prompt for date
+                await reaction.message.reply(
+                    f"{user.mention} - ⏰ Please reply with a snooze date:\n"
+                    "- `tomorrow`\n"
+                    "- `3 days`\n"
+                    "- `next week`\n"
+                    "- `2026-01-20`\n"
+                    "Not yet implemented."
+                )
+            elif emoji == "❌":
+                # Dismiss - set next_action_date far in future
+                await reaction.message.reply(
+                    f"{user.mention} - ❌ Dismiss not yet implemented. "
+                    "This will hide entries from future digests."
+                )
+            elif emoji == "🔁":
+                # Refresh digest
+                await self.generate_digest()
+            else:
+                logger.debug(f"Ignoring unknown emoji: {emoji}")
+
+        except Exception as e:
+            logger.error(f"Error handling reaction {emoji}: {e}", exc_info=True)
+            ERRORS.labels(service="reflex", error_type="reaction_handler").inc()
+
+    async def generate_digest(self) -> None:
+        """Generate and send daily digest to Discord channel."""
+        logger.info("Generating daily digest")
+
+        try:
+            # Get channel
+            channel = self.get_channel(int(self.reflex_channel_id))
+            if not channel:
+                logger.error(f"Could not find channel {self.reflex_channel_id}")
+                return
+
+            # Query entries WHERE next_action_date IS NULL OR next_action_date <= NOW()
+            # For now, use a simple SQL query - we'll add a method to PostgresStorage later
+            with self.pg_conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, category, title, tags, captured_at, next_action_date
+                    FROM reflex_entries
+                    WHERE status = 'active'
+                      AND (next_action_date IS NULL OR next_action_date <= NOW())
+                    ORDER BY category, captured_at DESC
+                    """)
+                rows = cur.fetchall()
+
+            if not rows:
+                logger.info("No entries to show in digest")
+                await channel.send("## Daily Digest\n\nNo entries to show today! 🎉")
+                return
+
+            # Group by category
+            by_category: dict[str, list[tuple]] = {}
+            for row in rows:
+                category = row[1]
+                if category not in by_category:
+                    by_category[category] = []
+                by_category[category].append(row)
+
+            # Build digest message
+            category_emojis = {
+                "person": "👤",
+                "project": "📋",
+                "idea": "💡",
+                "admin": "📌",
+                "inbox": "📥",
+            }
+
+            digest_parts = ["## Daily Digest\n"]
+            digest_parts.append(f"**{len(rows)} entries ready for action**\n")
+
+            for category in ["project", "admin", "person", "idea", "inbox"]:
+                if category not in by_category:
+                    continue
+
+                entries = by_category[category]
+                emoji = category_emojis.get(category, "📝")
+                digest_parts.append(f"\n### {emoji} {category.title()} ({len(entries)})\n")
+
+                for row in entries[:5]:  # Show max 5 per category
+                    entry_id, _, title, tags, captured_at, _ = row
+                    tags_str = f" `{', '.join(tags)}`" if tags else ""
+                    digest_parts.append(f"- **{title}**{tags_str} (ID: {entry_id})\n")
+
+                if len(entries) > 5:
+                    digest_parts.append(f"  _...and {len(entries) - 5} more_\n")
+
+            digest_parts.append("\n**React to take action:**\n")
+            digest_parts.append("✅ - Mark as done (archive)\n")
+            digest_parts.append("⏰ - Snooze (will prompt for date)\n")
+            digest_parts.append("❌ - Dismiss from digest\n")
+            digest_parts.append("🔁 - Refresh digest\n")
+
+            # Send digest
+            digest_message = "".join(digest_parts)
+            sent_message = await channel.send(digest_message)
+
+            # Add reaction options
+            for emoji in ["✅", "⏰", "❌", "🔁"]:
+                await sent_message.add_reaction(emoji)
+
+            logger.info(f"Sent digest with {len(rows)} entries (message ID: {sent_message.id})")
+
+        except Exception as e:
+            logger.error(f"Failed to generate digest: {e}", exc_info=True)
+            ERRORS.labels(service="reflex", error_type="digest_generation").inc()
+
+
+async def webhook_digest_handler(request: web.Request) -> web.Response:
+    """Handle /webhook/digest POST requests.
+
+    Args:
+        request: HTTP request
+
+    Returns:
+        HTTP response
+    """
+    bot: ReflexBot = request.app["bot"]
+
+    # Check Authorization header
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        logger.warning("Webhook request missing or invalid Authorization header")
+        return web.Response(status=401, text="Unauthorized")
+
+    token = auth_header.replace("Bearer ", "")
+    if token != bot.webhook_token:
+        logger.warning("Webhook request with invalid token")
+        return web.Response(status=401, text="Unauthorized")
+
+    # Trigger digest generation
+    logger.info("Webhook triggered digest generation")
+    asyncio.create_task(bot.generate_digest())
+
+    return web.Response(status=200, text="Digest generation triggered")
+
+
+async def start_webhook_server(bot: ReflexBot, port: int) -> web.AppRunner:
+    """Start HTTP webhook server.
+
+    Args:
+        bot: Bot instance
+        port: Port to listen on
+
+    Returns:
+        AppRunner instance
+    """
+    app = web.Application()
+    app["bot"] = bot
+
+    app.router.add_post("/webhook/digest", webhook_digest_handler)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
+    logger.info(f"Webhook server started on port {port}")
+    return runner
+
 
 def main() -> None:
     """Main entry point."""
@@ -436,9 +638,22 @@ def main() -> None:
     if not bot_token:
         raise ValueError("DISCORD_BOT_TOKEN environment variable not set")
 
-    # Create and run bot
+    # Get webhook port
+    webhook_port = int(os.getenv("REFLEX_WEBHOOK_PORT", "8097"))
+
+    # Create bot
     bot = ReflexBot()
-    bot.run(bot_token)
+
+    # Start webhook server in bot's event loop
+    async def run_bot() -> None:
+        """Run bot with webhook server."""
+        async with bot:
+            # Start webhook server
+            await start_webhook_server(bot, webhook_port)
+            # Start bot
+            await bot.start(bot_token)
+
+    asyncio.run(run_bot())
 
 
 if __name__ == "__main__":
