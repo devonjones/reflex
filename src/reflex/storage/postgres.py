@@ -60,8 +60,9 @@ class PostgresStorage:
                     llm_model,
                     llm_reasoning,
                     status,
-                    captured_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    captured_at,
+                    bot_version
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -76,6 +77,7 @@ class PostgresStorage:
                     entry.llm_reasoning,
                     entry.status,
                     entry.captured_at,
+                    entry.bot_version,
                 ),
             )
             entry_id: int = cur.fetchone()[0]
@@ -178,6 +180,7 @@ class PostgresStorage:
             git_commit_sha=row["git_commit_sha"],
             markdown_path=row["markdown_path"],
             original_message=original_message,
+            bot_version=row["bot_version"],
         )
 
     def get_recent_entries(
@@ -243,6 +246,109 @@ class PostgresStorage:
                     git_commit_sha=row["git_commit_sha"],
                     markdown_path=row["markdown_path"],
                     original_message=None,  # Not fetched in list queries (see docstring)
+                    bot_version=row["bot_version"],
+                )
+            )
+
+        return entries
+
+    def update_entry(self, entry: Entry) -> None:
+        """Update an existing entry.
+
+        Args:
+            entry: Entry with updated fields (must have id set)
+
+        Raises:
+            ValueError: If entry.id is None
+        """
+        if entry.id is None:
+            raise ValueError("Cannot update entry without id")
+
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE reflex_entries SET
+                    category = %s,
+                    title = %s,
+                    tags = %s,
+                    llm_confidence = %s,
+                    llm_model = %s,
+                    llm_reasoning = %s,
+                    status = %s,
+                    bot_version = %s
+                WHERE id = %s
+                """,
+                (
+                    entry.category,
+                    entry.title,
+                    entry.tags,
+                    entry.llm_confidence,
+                    entry.llm_model,
+                    entry.llm_reasoning,
+                    entry.status,
+                    entry.bot_version,
+                    entry.id,
+                ),
+            )
+        self.conn.commit()
+        logger.info(f"Updated entry {entry.id}")
+
+    def get_entries_needing_migration(self, current_version: str) -> list[Entry]:
+        """Get all unarchived entries that need migration.
+
+        Args:
+            current_version: The current bot version
+
+        Returns:
+            List of entries where bot_version is NULL or < current_version and status != 'archived'
+        """
+        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT * FROM reflex_entries
+                WHERE status != 'archived'
+                AND (bot_version IS NULL OR bot_version < %s)
+                ORDER BY id
+                """,
+                (current_version,),
+            )
+            rows = cur.fetchall()
+
+        entries = []
+        for row in rows:
+            # Fetch body from DuckDB for migration purposes
+            try:
+                body_response = self.http_client.get(
+                    f"{self.duckdb_api_url}/body",
+                    params={"gmail_id": str(row["id"])},
+                )
+                body_response.raise_for_status()
+                body_data = body_response.json()
+                original_message = base64.b64decode(body_data["body_data"]).decode("utf-8")
+            except Exception as e:
+                logger.error(f"Failed to fetch body for entry {row['id']}: {e}")
+                original_message = None
+
+            entries.append(
+                Entry(
+                    id=row["id"],
+                    discord_message_id=row["discord_message_id"],
+                    discord_channel_id=row["discord_channel_id"],
+                    discord_user_id=row["discord_user_id"],
+                    category=row["category"],
+                    title=row["title"],
+                    tags=row["tags"],
+                    llm_confidence=row["llm_confidence"],
+                    llm_model=row["llm_model"],
+                    llm_reasoning=row["llm_reasoning"],
+                    status=row["status"],
+                    captured_at=row["captured_at"],
+                    updated_at=row["updated_at"],
+                    exported_to_git=row["exported_to_git"],
+                    git_commit_sha=row["git_commit_sha"],
+                    markdown_path=row["markdown_path"],
+                    original_message=original_message,
+                    bot_version=row["bot_version"],
                 )
             )
 

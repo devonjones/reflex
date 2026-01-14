@@ -1,5 +1,6 @@
 """Discord bot for Reflex knowledge capture."""
 
+import asyncio
 import os
 import re
 from datetime import datetime, timezone
@@ -12,6 +13,7 @@ from cortex_utils.metrics import ERRORS, PROCESSING_DURATION, start_metrics_serv
 from discord.ext import commands
 from prometheus_client import Counter, Histogram
 
+from reflex.migrations import BOT_VERSION, migrate_entry
 from reflex.models.entry import Entry
 from reflex.services.classifier import ReflexClassifier
 from reflex.storage.exporter import MarkdownExporter
@@ -45,6 +47,27 @@ EXPORTS_TOTAL = Counter(
     "reflex_exports_total",
     "Total markdown exports",
     ["status"],
+)
+
+MIGRATIONS_PENDING = Histogram(
+    "reflex_migrations_pending",
+    "Number of entries pending migration at startup",
+    buckets=[0, 1, 5, 10, 20, 50, 100],
+)
+
+MIGRATIONS_COMPLETED = Counter(
+    "reflex_migrations_completed_total",
+    "Total number of successful migrations",
+)
+
+MIGRATIONS_FAILED = Counter(
+    "reflex_migrations_failed_total",
+    "Total number of failed migrations",
+)
+
+MIGRATION_DURATION = Histogram(
+    "reflex_migration_duration_seconds",
+    "Time spent migrating entries",
 )
 
 
@@ -190,8 +213,49 @@ class ReflexBot(commands.Bot):
     async def on_ready(self) -> None:
         """Called when bot is ready."""
         if self.user:
-            logger.info(f"Bot ready: {self.user} (ID: {self.user.id})")
+            logger.info(f"Bot ready: {self.user} (ID: {self.user.id}) - version {BOT_VERSION}")
         logger.info(f"Listening on channel ID: {self.reflex_channel_id}")
+
+        # Spawn background migration task
+        asyncio.create_task(self.migrate_old_entries())
+
+    async def migrate_old_entries(self) -> None:
+        """Background task to migrate old entries to current bot version."""
+        logger.info(f"Starting migration check for bot version {BOT_VERSION}")
+
+        try:
+            with MIGRATION_DURATION.time():
+                # Get entries needing migration
+                entries = self.storage.get_entries_needing_migration(BOT_VERSION)
+                MIGRATIONS_PENDING.observe(len(entries))
+
+                if not entries:
+                    logger.info("No entries need migration")
+                    return
+
+                logger.info(f"Found {len(entries)} entries needing migration")
+
+                # Migrate each entry
+                for entry in entries:
+                    try:
+                        migrate_entry(
+                            entry,
+                            BOT_VERSION,
+                            self.storage,
+                            self.exporter,
+                            self.classifier,
+                        )
+                        MIGRATIONS_COMPLETED.inc()
+                    except Exception as e:
+                        logger.error(f"Migration failed for entry {entry.id}: {e}", exc_info=True)
+                        MIGRATIONS_FAILED.inc()
+                        # Continue with next entry
+
+                logger.info(f"Migration complete: {len(entries)} entries processed")
+
+        except Exception as e:
+            logger.error(f"Migration task failed: {e}", exc_info=True)
+            ERRORS.labels(service="reflex", error_type="migration").inc()
 
     async def on_message(self, message: discord.Message) -> None:
         """Handle incoming messages.
@@ -319,6 +383,7 @@ class ReflexBot(commands.Bot):
             git_commit_sha=None,
             markdown_path=None,
             original_message=message.content,
+            bot_version=BOT_VERSION,
         )
 
         # Store in database
