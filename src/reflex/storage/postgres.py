@@ -126,6 +126,28 @@ class PostgresStorage:
         response.raise_for_status()
         logger.info(f"Stored body for entry {entry_id} in DuckDB")
 
+    def _get_body_from_duckdb(self, entry_id: int) -> Optional[str]:
+        """Fetch entry body from DuckDB.
+
+        Args:
+            entry_id: Entry ID
+
+        Returns:
+            Decoded message body or None if fetch fails
+        """
+        try:
+            body_response = self.http_client.get(
+                f"{self.duckdb_api_url}/body",
+                params={"gmail_id": str(entry_id)},
+            )
+            body_response.raise_for_status()
+            body_data = body_response.json()
+            # Decode base64 body_data
+            return base64.b64decode(body_data["body_data"]).decode("utf-8")
+        except Exception as e:
+            logger.error(f"Failed to fetch body for entry {entry_id}: {e}")
+            return None
+
     def get_entry(self, entry_id: int) -> Optional[Entry]:
         """Retrieve entry by ID.
 
@@ -148,19 +170,7 @@ class PostgresStorage:
             return None
 
         # Fetch body from DuckDB
-        try:
-            body_response = self.http_client.get(
-                f"{self.duckdb_api_url}/body",
-                params={"gmail_id": str(entry_id)},
-            )
-            body_response.raise_for_status()
-            body_data = body_response.json()
-            # Decode base64 body_data
-            original_message = base64.b64decode(body_data["body_data"]).decode("utf-8")
-        except Exception as e:
-            logger.error(f"Failed to fetch body for entry {entry_id}: {e}")
-            # Return None to explicitly signal failure rather than silently returning empty string
-            original_message = None
+        original_message = self._get_body_from_duckdb(entry_id)
 
         return Entry(
             id=row["id"],
@@ -317,17 +327,7 @@ class PostgresStorage:
         entries = []
         for row in rows:
             # Fetch body from DuckDB for migration purposes
-            try:
-                body_response = self.http_client.get(
-                    f"{self.duckdb_api_url}/body",
-                    params={"gmail_id": str(row["id"])},
-                )
-                body_response.raise_for_status()
-                body_data = body_response.json()
-                original_message = base64.b64decode(body_data["body_data"]).decode("utf-8")
-            except Exception as e:
-                logger.error(f"Failed to fetch body for entry {row['id']}: {e}")
-                original_message = None
+            original_message = self._get_body_from_duckdb(row["id"])
 
             entries.append(
                 Entry(

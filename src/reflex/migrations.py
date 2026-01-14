@@ -7,6 +7,7 @@ or have fields reprocessed with improved logic. This module handles automatic mi
 from typing import TYPE_CHECKING, Optional
 
 from cortex_utils.logging import get_logger
+from packaging.version import parse as parse_version
 
 from reflex.models.entry import Entry
 
@@ -89,23 +90,34 @@ def migrate_entry(
     Raises:
         Exception: If migration fails
     """
-    current = entry.bot_version or "0.0.0"
+    current_v = parse_version(entry.bot_version or "0.0.0")
+    target_v = parse_version(target_version)
 
-    if current >= target_version:
-        logger.debug(f"Entry {entry.id} already at version {current}, no migration needed")
+    if current_v >= target_v:
+        logger.debug(
+            f"Entry {entry.id} already at version {current_v}, no migration needed"
+        )
         return
 
     # Find migrations to apply
-    versions_needed = sorted([v for v in MIGRATIONS.keys() if current < v <= target_version])
+    versions_needed = sorted(
+        [v for v in MIGRATIONS.keys() if current_v < parse_version(v) <= target_v],
+        key=parse_version,
+    )
 
     if not versions_needed:
         # No migrations defined, just update version
-        logger.info(f"No migrations defined between {current} and {target_version}, updating version")
+        logger.info(
+            f"No migrations defined between {current_v} and {target_version}, updating version"
+        )
         entry.bot_version = target_version
         storage.update_entry(entry)
         return
 
-    logger.info(f"Migrating entry {entry.id}: {current} → {target_version} ({len(versions_needed)} migrations)")
+    logger.info(
+        f"Migrating entry {entry.id}: {current_v} → {target_version} "
+        f"({len(versions_needed)} migrations)"
+    )
 
     for version in versions_needed:
         migration_func = MIGRATIONS[version]
