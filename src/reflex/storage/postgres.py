@@ -62,8 +62,9 @@ class PostgresStorage:
                     llm_reasoning,
                     status,
                     captured_at,
-                    bot_version
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    bot_version,
+                    next_action_date
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -79,6 +80,7 @@ class PostgresStorage:
                     entry.status,
                     entry.captured_at,
                     entry.bot_version,
+                    entry.next_action_date,
                 ),
             )
             entry_id: int = cur.fetchone()[0]
@@ -192,6 +194,7 @@ class PostgresStorage:
             markdown_path=row["markdown_path"],
             original_message=original_message,
             bot_version=row["bot_version"],
+            next_action_date=row["next_action_date"],
         )
 
     def get_recent_entries(
@@ -258,6 +261,7 @@ class PostgresStorage:
                     markdown_path=row["markdown_path"],
                     original_message=None,  # Not fetched in list queries (see docstring)
                     bot_version=row["bot_version"],
+                    next_action_date=row["next_action_date"],
                 )
             )
 
@@ -286,7 +290,8 @@ class PostgresStorage:
                     llm_model = %s,
                     llm_reasoning = %s,
                     status = %s,
-                    bot_version = %s
+                    bot_version = %s,
+                    next_action_date = %s
                 WHERE id = %s
                 """,
                 (
@@ -298,6 +303,7 @@ class PostgresStorage:
                     entry.llm_reasoning,
                     entry.status,
                     entry.bot_version,
+                    entry.next_action_date,
                     entry.id,
                 ),
             )
@@ -358,6 +364,7 @@ class PostgresStorage:
                     markdown_path=row["markdown_path"],
                     original_message=original_message,
                     bot_version=row["bot_version"],
+                    next_action_date=row["next_action_date"],
                 )
             )
 

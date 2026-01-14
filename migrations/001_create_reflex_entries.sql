@@ -51,6 +51,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trigger_reflex_entries_updated_at ON reflex_entries;
 CREATE TRIGGER trigger_reflex_entries_updated_at
     BEFORE UPDATE ON reflex_entries
     FOR EACH ROW

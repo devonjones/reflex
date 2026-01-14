@@ -18,55 +18,40 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Current bot version
-BOT_VERSION = "1.1.0"
+BOT_VERSION = "1.2.0"
 
 
 def migrate_to_1_1_0(entry: Entry) -> None:
-    """Migration to version 1.1.0: Add next_action_date field.
+    """Migration to version 1.1.0: Initial version tracking.
 
-    Sets next_action_date to None for all entries, which means they will
-    show immediately in the digest.
+    First migration that sets bot_version field. No data changes needed.
 
     Args:
         entry: Entry to migrate
     """
-    # next_action_date field will be added to Entry model in Phase 4
-    # For now, this is a placeholder migration
-    logger.info(f"Migrated entry {entry.id} to 1.1.0 (placeholder)")
+    logger.info(f"Migrated entry {entry.id} to 1.1.0 (version tracking)")
 
 
-def migrate_to_1_2_0(entry: Entry, classifier) -> None:  # type: ignore
-    """Migration to version 1.2.0: Re-classify with English-only prompt.
+def migrate_to_1_2_0(entry: Entry) -> None:
+    """Migration to version 1.2.0: Add next_action_date field.
 
-    Re-runs classification on the original message using the updated prompt
-    that explicitly requests English-only tags and reasoning.
+    The SQL migration (002_add_next_action_date.sql) already added the column with DEFAULT NULL.
+    All existing entries automatically have next_action_date = NULL (show immediately in digest).
+    No data migration needed - just version bump.
 
     Args:
         entry: Entry to migrate
-        classifier: ReflexClassifier instance for re-classification
     """
-    if entry.original_message is None:
-        logger.warning(f"Cannot re-classify entry {entry.id}: no original_message")
-        return
-
-    logger.info(f"Re-classifying entry {entry.id} with English-only prompt")
-    result = classifier.classify(entry.original_message)
-
-    # Update classification fields
-    entry.tags = result.suggested_tags
-    entry.llm_reasoning = result.reasoning
-    entry.llm_confidence = result.confidence
-    entry.llm_model = result.model
-    # Don't change category - that would be too disruptive
-
-    logger.info(f"Migrated entry {entry.id} to 1.2.0 (re-classified)")
+    # next_action_date field added via SQL migration 002
+    # Field already has DEFAULT NULL, so no data changes needed
+    logger.info(f"Migrated entry {entry.id} to 1.2.0 (next_action_date field added)")
 
 
 # Migration registry: version -> migration function
 # Migrations are applied sequentially in version order
 MIGRATIONS = {
     "1.1.0": migrate_to_1_1_0,
-    # "1.2.0": migrate_to_1_2_0,  # Commented out for now - requires classifier parameter
+    "1.2.0": migrate_to_1_2_0,
 }
 
 

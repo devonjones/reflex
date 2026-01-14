@@ -27,6 +27,7 @@ class Entry:
     markdown_path: Optional[str] = None
     original_message: Optional[str] = None  # For DuckDB storage, None if fetch failed
     bot_version: Optional[str] = None  # Version of bot that created/last migrated this entry
+    next_action_date: Optional[datetime] = None  # When to next show in digest (NULL = show now, future = snoozed)
 
 
 @dataclass
