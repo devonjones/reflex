@@ -371,10 +371,14 @@ class PostgresStorage:
         return entries
 
     def get_digest_entries(self) -> list[tuple[int, str, str, list[str], datetime, Optional[datetime]]]:
-        """Get entries for digest display.
+        """Get actionable entries for digest display.
 
-        Returns entries where status='active' AND (next_action_date IS NULL OR <= NOW()),
-        ordered by category and captured_at DESC.
+        Returns entries where:
+        - status='active' AND
+        - (next_action_date IS NULL OR <= NOW()) AND
+        - category IN ('admin', 'project')
+
+        Ordered by category and captured_at DESC.
 
         Returns:
             List of tuples: (id, category, title, tags, captured_at, next_action_date)
@@ -386,6 +390,7 @@ class PostgresStorage:
                 FROM reflex_entries
                 WHERE status = 'active'
                   AND (next_action_date IS NULL OR next_action_date <= NOW())
+                  AND category IN ('admin', 'project')
                 ORDER BY category, captured_at DESC
                 """
             )
