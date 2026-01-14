@@ -226,8 +226,8 @@ class ReflexBot(commands.Bot):
             litellm_url, tier1_model, tier2_model, tier1_threshold, tier2_threshold
         )
 
-        # State tracking for snooze prompts: (digest_message_id, user_id) -> set of entry IDs
-        self.snooze_pending: dict[tuple[int, int], set[int]] = {}
+        # State tracking for snooze prompts: (digest_message_id, user_id) -> (set of entry IDs, digest_message_id)
+        self.snooze_pending: dict[tuple[int, int], tuple[set[int], int]] = {}
 
         # Track digest message_id -> entry_id for reaction handling
         self.digest_message_to_entry: dict[int, int] = {}
@@ -594,9 +594,9 @@ class ReflexBot(commands.Bot):
             "- `jan 20` or `2026-01-20`"
         )
 
-        # Store pending snooze state (for this single entry)
+        # Store pending snooze state (for this single entry) + digest message ID for cleanup
         key = (snooze_msg.id, user.id)
-        self.snooze_pending[key] = {entry_id}
+        self.snooze_pending[key] = ({entry_id}, reaction.message.id)
         logger.info(f"Waiting for snooze date from {user} for entry {entry_id}")
 
     async def handle_snooze_reply(
@@ -608,7 +608,7 @@ class ReflexBot(commands.Bot):
             message: User's reply message
             key: (snooze_prompt_message_id, user_id) tuple
         """
-        entry_ids = self.snooze_pending[key]
+        entry_ids, digest_message_id = self.snooze_pending[key]
         date_str = message.content.strip()
 
         # Parse the date
@@ -637,10 +637,9 @@ class ReflexBot(commands.Bot):
             )
         self.pg_conn.commit()
 
-        # Remove entries from digest tracking
-        for msg_id, eid in list(self.digest_message_to_entry.items()):
-            if eid in entry_ids:
-                del self.digest_message_to_entry[msg_id]
+        # Remove entry from digest tracking if it still exists
+        if digest_message_id in self.digest_message_to_entry:
+            del self.digest_message_to_entry[digest_message_id]
 
         # Clear pending state
         del self.snooze_pending[key]
@@ -676,6 +675,10 @@ class ReflexBot(commands.Bot):
             if not isinstance(channel, (discord.TextChannel, discord.Thread)):
                 logger.error(f"Channel {self.reflex_channel_id} is not a text channel")
                 return
+
+            # Clear previous digest's message tracking to prevent memory leaks
+            # and acting on stale messages
+            self.digest_message_to_entry.clear()
 
             # Query actionable entries (admin, project) WHERE next_action_date IS NULL OR <= NOW()
             rows = await asyncio.to_thread(self.storage.get_digest_entries)
