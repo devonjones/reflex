@@ -369,3 +369,26 @@ class PostgresStorage:
             )
 
         return entries
+
+    def get_digest_entries(self) -> list[tuple]:
+        """Get entries for digest display.
+
+        Returns entries where status='active' AND (next_action_date IS NULL OR <= NOW()),
+        ordered by category and captured_at DESC.
+
+        Returns:
+            List of tuples: (id, category, title, tags, captured_at, next_action_date)
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, category, title, tags, captured_at, next_action_date
+                FROM reflex_entries
+                WHERE status = 'active'
+                  AND (next_action_date IS NULL OR next_action_date <= NOW())
+                ORDER BY category, captured_at DESC
+                """
+            )
+            rows = cur.fetchall()
+
+        return rows

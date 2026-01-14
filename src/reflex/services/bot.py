@@ -1,6 +1,7 @@
 """Discord bot for Reflex knowledge capture."""
 
 import asyncio
+import hmac
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -683,17 +684,7 @@ class ReflexBot(commands.Bot):
                 return
 
             # Query entries WHERE next_action_date IS NULL OR next_action_date <= NOW()
-            # For now, use a simple SQL query - we'll add a method to PostgresStorage later
-            with self.pg_conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT id, category, title, tags, captured_at, next_action_date
-                    FROM reflex_entries
-                    WHERE status = 'active'
-                      AND (next_action_date IS NULL OR next_action_date <= NOW())
-                    ORDER BY category, captured_at DESC
-                    """)
-                rows = cur.fetchall()
+            rows = await asyncio.to_thread(self.storage.get_digest_entries)
 
             if not rows:
                 logger.info("No entries to show in digest")
@@ -776,7 +767,7 @@ async def webhook_digest_handler(request: web.Request) -> web.Response:
         return web.Response(status=401, text="Unauthorized")
 
     token = auth_header.replace("Bearer ", "")
-    if token != bot.webhook_token:
+    if not hmac.compare_digest(token, bot.webhook_token):
         logger.warning("Webhook request with invalid token")
         return web.Response(status=401, text="Unauthorized")
 
