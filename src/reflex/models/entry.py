@@ -28,6 +28,7 @@ class Entry:
     original_message: Optional[str] = None  # For DuckDB storage, None if fetch failed
     bot_version: Optional[str] = None  # Version of bot that created/last migrated this entry
     next_action_date: Optional[datetime] = None  # When to next show in digest (NULL = show now, future = snoozed)
+    actionable: bool = False  # Whether this entry requires action (tasks, reminders, etc.)
 
 
 @dataclass
@@ -39,3 +40,4 @@ class ClassificationResult:
     reasoning: str
     suggested_tags: list[str]
     model: str
+    actionable: bool = False  # Whether this entry requires user action

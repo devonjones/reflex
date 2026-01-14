@@ -63,8 +63,9 @@ class PostgresStorage:
                     status,
                     captured_at,
                     bot_version,
-                    next_action_date
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    next_action_date,
+                    actionable
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -81,6 +82,7 @@ class PostgresStorage:
                     entry.captured_at,
                     entry.bot_version,
                     entry.next_action_date,
+                    entry.actionable,
                 ),
             )
             entry_id: int = cur.fetchone()[0]
@@ -195,6 +197,7 @@ class PostgresStorage:
             original_message=original_message,
             bot_version=row["bot_version"],
             next_action_date=row["next_action_date"],
+            actionable=row.get("actionable", False),  # Default False for old entries
         )
 
     def get_recent_entries(
@@ -262,6 +265,7 @@ class PostgresStorage:
                     original_message=None,  # Not fetched in list queries (see docstring)
                     bot_version=row["bot_version"],
                     next_action_date=row["next_action_date"],
+                    actionable=row.get("actionable", False),  # Default False for old entries
                 )
             )
 
@@ -291,7 +295,8 @@ class PostgresStorage:
                     llm_reasoning = %s,
                     status = %s,
                     bot_version = %s,
-                    next_action_date = %s
+                    next_action_date = %s,
+                    actionable = %s
                 WHERE id = %s
                 """,
                 (
@@ -304,6 +309,7 @@ class PostgresStorage:
                     entry.status,
                     entry.bot_version,
                     entry.next_action_date,
+                    entry.actionable,
                     entry.id,
                 ),
             )
@@ -365,16 +371,21 @@ class PostgresStorage:
                     original_message=original_message,
                     bot_version=row["bot_version"],
                     next_action_date=row["next_action_date"],
+                    actionable=row.get("actionable", False),  # Default False for old entries
                 )
             )
 
         return entries
 
     def get_digest_entries(self) -> list[tuple[int, str, str, list[str], datetime, Optional[datetime]]]:
-        """Get entries for digest display.
+        """Get actionable entries for digest display.
 
-        Returns entries where status='active' AND (next_action_date IS NULL OR <= NOW()),
-        ordered by category and captured_at DESC.
+        Returns entries where:
+        - status='active' AND
+        - (next_action_date IS NULL OR <= NOW()) AND
+        - actionable=true
+
+        Ordered by category and captured_at DESC.
 
         Returns:
             List of tuples: (id, category, title, tags, captured_at, next_action_date)
@@ -386,6 +397,7 @@ class PostgresStorage:
                 FROM reflex_entries
                 WHERE status = 'active'
                   AND (next_action_date IS NULL OR next_action_date <= NOW())
+                  AND actionable = true
                 ORDER BY category, captured_at DESC
                 """
             )
