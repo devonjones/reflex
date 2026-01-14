@@ -4,9 +4,15 @@ When the bot version changes, entries may need to be updated to match the new sc
 or have fields reprocessed with improved logic. This module handles automatic migrations.
 """
 
+from typing import TYPE_CHECKING, Optional
+
 from cortex_utils.logging import get_logger
 
 from reflex.models.entry import Entry
+
+if TYPE_CHECKING:
+    from reflex.storage.exporter import MarkdownExporter
+    from reflex.storage.postgres import PostgresStorage
 
 logger = get_logger(__name__)
 
@@ -63,7 +69,12 @@ MIGRATIONS = {
 }
 
 
-def migrate_entry(entry: Entry, target_version: str, storage, exporter=None) -> None:  # type: ignore
+def migrate_entry(
+    entry: Entry,
+    target_version: str,
+    storage: "PostgresStorage",
+    exporter: Optional["MarkdownExporter"] = None,
+) -> None:
     """Apply all migrations from entry.bot_version to target_version.
 
     Migrations are applied sequentially in version order. After each migration,

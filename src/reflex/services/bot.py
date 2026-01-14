@@ -238,7 +238,8 @@ class ReflexBot(commands.Bot):
                 # Migrate each entry
                 for entry in entries:
                     try:
-                        migrate_entry(
+                        await asyncio.to_thread(
+                            migrate_entry,
                             entry,
                             BOT_VERSION,
                             self.storage,
