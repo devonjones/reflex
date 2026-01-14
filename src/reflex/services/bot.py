@@ -225,8 +225,10 @@ class ReflexBot(commands.Bot):
 
         try:
             with MIGRATION_DURATION.time():
-                # Get entries needing migration
-                entries = self.storage.get_entries_needing_migration(BOT_VERSION)
+                # Get entries needing migration (in thread to avoid blocking event loop)
+                entries = await asyncio.to_thread(
+                    self.storage.get_entries_needing_migration, BOT_VERSION
+                )
                 MIGRATIONS_PENDING.observe(len(entries))
 
                 if not entries:
@@ -238,7 +240,8 @@ class ReflexBot(commands.Bot):
                 # Migrate each entry
                 for entry in entries:
                     try:
-                        migrate_entry(
+                        await asyncio.to_thread(
+                            migrate_entry,
                             entry,
                             BOT_VERSION,
                             self.storage,

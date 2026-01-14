@@ -8,6 +8,7 @@ import httpx
 import psycopg2
 import psycopg2.extras
 from cortex_utils.logging import get_logger
+from packaging.version import parse as parse_version
 
 from reflex.models.entry import Entry
 
@@ -126,6 +127,28 @@ class PostgresStorage:
         response.raise_for_status()
         logger.info(f"Stored body for entry {entry_id} in DuckDB")
 
+    def _get_body_from_duckdb(self, entry_id: int) -> Optional[str]:
+        """Fetch entry body from DuckDB.
+
+        Args:
+            entry_id: Entry ID
+
+        Returns:
+            Decoded message body or None if fetch fails
+        """
+        try:
+            body_response = self.http_client.get(
+                f"{self.duckdb_api_url}/body",
+                params={"gmail_id": str(entry_id)},
+            )
+            body_response.raise_for_status()
+            body_data = body_response.json()
+            # Decode base64 body_data
+            return base64.b64decode(body_data["body_data"]).decode("utf-8")
+        except Exception as e:
+            logger.error(f"Failed to fetch body for entry {entry_id}: {e}")
+            return None
+
     def get_entry(self, entry_id: int) -> Optional[Entry]:
         """Retrieve entry by ID.
 
@@ -148,19 +171,7 @@ class PostgresStorage:
             return None
 
         # Fetch body from DuckDB
-        try:
-            body_response = self.http_client.get(
-                f"{self.duckdb_api_url}/body",
-                params={"gmail_id": str(entry_id)},
-            )
-            body_response.raise_for_status()
-            body_data = body_response.json()
-            # Decode base64 body_data
-            original_message = base64.b64decode(body_data["body_data"]).decode("utf-8")
-        except Exception as e:
-            logger.error(f"Failed to fetch body for entry {entry_id}: {e}")
-            # Return None to explicitly signal failure rather than silently returning empty string
-            original_message = None
+        original_message = self._get_body_from_duckdb(entry_id)
 
         return Entry(
             id=row["id"],
@@ -302,32 +313,30 @@ class PostgresStorage:
         Returns:
             List of entries where bot_version is NULL or < current_version and status != 'archived'
         """
+        # Fetch all unarchived entries - filtering by version must be done in Python
+        # because SQL string comparison doesn't handle semantic versioning correctly
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 """
                 SELECT * FROM reflex_entries
                 WHERE status != 'archived'
-                AND (bot_version IS NULL OR bot_version < %s)
                 ORDER BY id
-                """,
-                (current_version,),
+                """
             )
-            rows = cur.fetchall()
+            all_rows = cur.fetchall()
+
+        # Filter rows using semantic version comparison
+        target_v = parse_version(current_version)
+        rows = [
+            row
+            for row in all_rows
+            if parse_version(row.get("bot_version") or "0.0.0") < target_v
+        ]
 
         entries = []
         for row in rows:
             # Fetch body from DuckDB for migration purposes
-            try:
-                body_response = self.http_client.get(
-                    f"{self.duckdb_api_url}/body",
-                    params={"gmail_id": str(row["id"])},
-                )
-                body_response.raise_for_status()
-                body_data = body_response.json()
-                original_message = base64.b64decode(body_data["body_data"]).decode("utf-8")
-            except Exception as e:
-                logger.error(f"Failed to fetch body for entry {row['id']}: {e}")
-                original_message = None
+            original_message = self._get_body_from_duckdb(row["id"])
 
             entries.append(
                 Entry(

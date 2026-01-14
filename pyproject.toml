@@ -12,6 +12,7 @@ dependencies = [
     "PyYAML>=6.0.1",
     "python-slugify>=8.0.1",
     "GitPython>=3.1.40",
+    "packaging>=23.0",
     "cortex-utils @ git+https://github.com/devonjones/cortex-utils.git@3c8a9d4",
 ]
 
