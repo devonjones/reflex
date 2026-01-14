@@ -8,6 +8,7 @@ import httpx
 import psycopg2
 import psycopg2.extras
 from cortex_utils.logging import get_logger
+from packaging.version import parse as parse_version
 
 from reflex.models.entry import Entry
 
@@ -312,17 +313,25 @@ class PostgresStorage:
         Returns:
             List of entries where bot_version is NULL or < current_version and status != 'archived'
         """
+        # Fetch all unarchived entries - filtering by version must be done in Python
+        # because SQL string comparison doesn't handle semantic versioning correctly
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 """
                 SELECT * FROM reflex_entries
                 WHERE status != 'archived'
-                AND (bot_version IS NULL OR bot_version < %s)
                 ORDER BY id
-                """,
-                (current_version,),
+                """
             )
-            rows = cur.fetchall()
+            all_rows = cur.fetchall()
+
+        # Filter rows using semantic version comparison
+        target_v = parse_version(current_version)
+        rows = [
+            row
+            for row in all_rows
+            if parse_version(row.get("bot_version") or "0.0.0") < target_v
+        ]
 
         entries = []
         for row in rows:
