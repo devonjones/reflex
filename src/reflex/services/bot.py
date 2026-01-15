@@ -868,21 +868,8 @@ class ReflexBot(commands.Bot):
                     f"Quick-complete: {user} archiving entry {entry_id} (message {message_id})"
                 )
 
-                # Archive the entry (inline for capture messages)
-                with self.pg_conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        UPDATE reflex_entries
-                        SET status = 'archived'
-                        WHERE id = %s
-                        """,
-                        (entry_id,),
-                    )
-                self.pg_conn.commit()
-
-                # Remove from tracking and reply
-                del self.capture_message_to_entry[reaction.message.id]
-                await reaction.message.reply(f"{user.mention} - ✅ Archived!")
+                # Archive the entry using shared handler
+                await self.handle_archive_entry(reaction, user, entry_id, source="capture")
 
             except discord.NotFound:
                 logger.warning(f"Could not find original message for capture confirmation {message_id}")
@@ -895,14 +882,15 @@ class ReflexBot(commands.Bot):
         logger.debug(f"Ignoring reaction on non-tracked message {message_id}")
 
     async def handle_archive_entry(
-        self, reaction: discord.Reaction, user: discord.User, entry_id: int
+        self, reaction: discord.Reaction, user: discord.User, entry_id: int, source: str = "digest"
     ) -> None:
-        """Archive a specific entry.
+        """Archive a specific entry from a digest or capture confirmation.
 
         Args:
             reaction: Discord reaction
             user: User who reacted
             entry_id: Entry ID to archive
+            source: Source of the archive request ("digest" or "capture")
         """
         # Update entry to archived
         with self.pg_conn.cursor() as cur:
@@ -916,10 +904,15 @@ class ReflexBot(commands.Bot):
             )
         self.pg_conn.commit()
 
-        # Remove from tracking
-        del self.digest_message_to_entry[reaction.message.id]
+        # Remove from tracking (depends on source)
+        message_id = reaction.message.id
+        if source == "capture":
+            del self.capture_message_to_entry[message_id]
+            logger.info(f"Archived entry {entry_id} via quick-complete reaction")
+        else:  # "digest"
+            del self.digest_message_to_entry[message_id]
+            logger.info(f"Archived entry {entry_id} via digest reaction")
 
-        logger.info(f"Archived entry {entry_id} via digest reaction")
         await reaction.message.reply(f"{user.mention} - ✅ Archived!")
 
     async def handle_snooze_entry(
