@@ -868,7 +868,7 @@ class ReflexBot(commands.Bot):
                 return
 
             channel = self.get_channel(int(self.reflex_channel_id))
-            if not channel or not isinstance(channel, discord.TextChannel):
+            if not channel or not isinstance(channel, (discord.TextChannel, discord.Thread)):
                 logger.error(f"Reflex channel {self.reflex_channel_id} not found or not a text channel")
                 return
 
