@@ -11,6 +11,8 @@ from typing import Optional
 import discord
 import psycopg2
 from aiohttp import web
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from cortex_utils.logging import configure_logging, get_logger
 from cortex_utils.metrics import ERRORS, PROCESSING_DURATION, start_metrics_server
 from discord.ext import commands
@@ -228,6 +230,19 @@ class ReflexBot(commands.Bot):
             litellm_url, tier1_model, tier2_model, tier1_threshold, tier2_threshold
         )
 
+        # Initialize scheduler for digest
+        self.scheduler = AsyncIOScheduler()
+
+        # Digest schedule configuration (default: 7am daily)
+        try:
+            self.digest_hour = int(os.getenv("REFLEX_DIGEST_DAILY_HOUR", "7"))
+            if not 0 <= self.digest_hour <= 23:
+                logger.warning(f"Invalid REFLEX_DIGEST_DAILY_HOUR={self.digest_hour}, using default 7")
+                self.digest_hour = 7
+        except ValueError:
+            logger.warning(f"Invalid REFLEX_DIGEST_DAILY_HOUR, using default 7")
+            self.digest_hour = 7
+
         # State tracking for snooze prompts: (snooze_prompt_id, user_id) -> (entry_id, digest_message_id)
         self.snooze_pending: dict[tuple[int, int], tuple[int, int]] = {}
 
@@ -241,6 +256,19 @@ class ReflexBot(commands.Bot):
         if self.user:
             logger.info(f"Bot ready: {self.user} (ID: {self.user.id}) - version {BOT_VERSION}")
         logger.info(f"Listening on channel ID: {self.reflex_channel_id}")
+
+        # Start scheduler for digest
+        if not self.scheduler.running:
+            # Schedule daily digest at configured hour
+            self.scheduler.add_job(
+                self.generate_digest,
+                CronTrigger(hour=self.digest_hour, minute=0),
+                id="daily_digest",
+                name=f"Daily Digest at {self.digest_hour}:00",
+                replace_existing=True,
+            )
+            self.scheduler.start()
+            logger.info(f"Scheduler started - daily digest scheduled for {self.digest_hour}:00")
 
         # Spawn background migration task
         asyncio.create_task(self.migrate_old_entries())
@@ -284,6 +312,18 @@ class ReflexBot(commands.Bot):
         except Exception as e:
             logger.error(f"Migration task failed: {e}", exc_info=True)
             ERRORS.labels(service="reflex", error_type="migration").inc()
+
+    async def close(self) -> None:
+        """Cleanup on bot shutdown."""
+        logger.info("Shutting down ReflexBot")
+
+        # Stop scheduler
+        if self.scheduler.running:
+            self.scheduler.shutdown()
+            logger.info("Scheduler stopped")
+
+        # Close parent
+        await super().close()
 
     async def on_message(self, message: discord.Message) -> None:
         """Handle incoming messages.
