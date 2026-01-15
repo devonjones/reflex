@@ -116,6 +116,9 @@ def generate_title(message: str, max_length: int = 80) -> str:
 class ReflexBot(commands.Bot):
     """Discord bot for Reflex."""
 
+    # Category constants
+    VALID_CATEGORIES = ["person", "project", "idea", "admin", "inbox"]
+
     # Digest constants
     DEFAULT_DIGEST_HOUR = 7
     DIGEST_CATEGORY_EMOJIS = {
@@ -545,9 +548,12 @@ class ReflexBot(commands.Bot):
                 ):
                     filtered.append(entry)
 
-            if filtered:
-                entries = filtered
-                logger.info(f"Filtered to {len(filtered)} entries by keywords")
+            if not filtered:
+                logger.info(f"Filtered to 0 entries with keywords: {parsed.target_keywords}")
+                return None
+
+            entries = filtered
+            logger.info(f"Filtered to {len(filtered)} entries by keywords")
 
         # Return most recent
         target = entries[0]
@@ -570,11 +576,10 @@ class ReflexBot(commands.Bot):
             return
 
         # Validate category
-        valid_categories = ["person", "project", "idea", "admin", "inbox"]
-        if new_category not in valid_categories:
+        if new_category not in self.VALID_CATEGORIES:
             await message.reply(
                 f"❌ Invalid category: {new_category}. "
-                f"Valid categories: {', '.join(valid_categories)}"
+                f"Valid categories: {', '.join(self.VALID_CATEGORIES)}"
             )
             return
 

@@ -45,9 +45,9 @@ Return JSON with this structure:
   "target": "that|this|last",
   "target_keywords": ["keyword1", "keyword2"],
   "parameters": {{
-    "new_category": "project",  // for move action
-    "tags": ["urgent", "followup"],  // for tag action
-    "reason": "completed"  // for archive action
+    "new_category": "project",
+    "tags": ["urgent", "followup"],
+    "reason": "completed"
   }}
 }}
 
