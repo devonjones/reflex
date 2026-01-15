@@ -279,6 +279,9 @@ class ReflexBot(commands.Bot):
         # Track digest message_id -> entry_id for reaction handling
         self.digest_message_to_entry: dict[int, int] = {}
 
+        # Track capture message_id -> entry_id for quick-complete via ✅
+        self.capture_message_to_entry: dict[int, int] = {}
+
         logger.info("ReflexBot initialized")
 
     async def on_ready(self) -> None:
@@ -764,12 +767,16 @@ class ReflexBot(commands.Bot):
 
         # Send confirmation
         await message.add_reaction("✅")
-        await message.reply(
+        reply = await message.reply(
             f"**Filed as {result.category}** - {title}\n"
             f"*Confidence: {result.confidence:.2f}*\n"
             f"*Tags: {', '.join(result.suggested_tags) if result.suggested_tags else 'none'}*\n"
             f"*Reasoning: {result.reasoning}*"
         )
+
+        # Track reply message for quick-complete
+        self.capture_message_to_entry[reply.id] = entry_id
+        logger.debug(f"Tracking capture message {reply.id} -> entry {entry_id}")
 
     async def on_error(self, event_method: str, *args: object, **kwargs: object) -> None:
         """Handle errors in event handlers.
@@ -783,7 +790,7 @@ class ReflexBot(commands.Bot):
     async def on_reaction_add(
         self, reaction: discord.Reaction, user: discord.User
     ) -> None:
-        """Handle emoji reactions on digest entry messages.
+        """Handle emoji reactions on digest entry messages and capture confirmations.
 
         Args:
             reaction: Discord reaction
@@ -797,50 +804,93 @@ class ReflexBot(commands.Bot):
         if str(reaction.message.channel.id) != self.reflex_channel_id:
             return
 
-        # Only handle reactions on bot's messages (digest messages)
+        # Only handle reactions on bot's messages
         if reaction.message.author != self.user:
             return
 
-        # Check if this is a digest entry message
         message_id = reaction.message.id
+        emoji = str(reaction.emoji)
+
+        # Check if this is a digest entry message
         entry_id = self.digest_message_to_entry.get(message_id)
-        if not entry_id:
-            logger.debug(f"Ignoring reaction on non-digest message {message_id}")
+        if entry_id:
+            logger.info(
+                f"Reaction {emoji} from {user} on digest entry {entry_id} (message {message_id})"
+            )
+
+            try:
+                # Dispatcher pattern for emoji reactions on digest messages
+                handler_map = {
+                    "✅": lambda r, u, e: self.handle_archive_entry(r, u, e, source="digest"),
+                    "⏰": lambda r, u, e: self.handle_snooze_entry(r, u, e, days=7, label="1 week"),
+                    "📅": lambda r, u, e: self.handle_snooze_entry(r, u, e, days=30, label="1 month"),
+                    "🕐": lambda r, u, e: self.handle_snooze_entry_custom(r, u, e),
+                }
+
+                handler = handler_map.get(emoji)
+                if handler:
+                    await handler(reaction, user, entry_id)
+                else:
+                    logger.debug(f"Ignoring unknown emoji: {emoji}")
+
+            except Exception as e:
+                logger.error(f"Error handling reaction {emoji}: {e}", exc_info=True)
+                ERRORS.labels(service="reflex", error_type="reaction_handler").inc()
             return
 
-        emoji = str(reaction.emoji)
-        logger.info(
-            f"Reaction {emoji} from {user} on digest entry {entry_id} (message {message_id})"
-        )
+        # Check if this is a capture confirmation message
+        entry_id = self.capture_message_to_entry.get(message_id)
+        if entry_id:
+            # Only handle ✅ for quick-complete on capture messages
+            if emoji != "✅":
+                logger.debug(f"Ignoring {emoji} on capture message (only ✅ supported)")
+                return
 
-        try:
-            # Dispatcher pattern for emoji reactions
-            handler_map = {
-                "✅": lambda r, u, e: self.handle_archive_entry(r, u, e),
-                "⏰": lambda r, u, e: self.handle_snooze_entry(r, u, e, days=7, label="1 week"),
-                "📅": lambda r, u, e: self.handle_snooze_entry(r, u, e, days=30, label="1 month"),
-                "🕐": lambda r, u, e: self.handle_snooze_entry_custom(r, u, e),
-            }
+            # Get the original message to verify the user is the author
+            try:
+                # The capture confirmation is a reply, so we can get the referenced message
+                if not reaction.message.reference or not reaction.message.reference.message_id:
+                    logger.warning(f"Capture message {message_id} has no reference to original")
+                    return
 
-            handler = handler_map.get(emoji)
-            if handler:
-                await handler(reaction, user, entry_id)
-            else:
-                logger.debug(f"Ignoring unknown emoji: {emoji}")
+                original_message = await reaction.message.channel.fetch_message(
+                    reaction.message.reference.message_id
+                )
 
-        except Exception as e:
-            logger.error(f"Error handling reaction {emoji}: {e}", exc_info=True)
-            ERRORS.labels(service="reflex", error_type="reaction_handler").inc()
+                # Only allow the original author to quick-complete
+                if user.id != original_message.author.id:
+                    logger.debug(
+                        f"User {user} tried to complete entry {entry_id} but is not original author"
+                    )
+                    return
+
+                logger.info(
+                    f"Quick-complete: {user} archiving entry {entry_id} (message {message_id})"
+                )
+
+                # Archive the entry using shared handler
+                await self.handle_archive_entry(reaction, user, entry_id, source="capture")
+
+            except discord.NotFound:
+                logger.warning(f"Could not find original message for capture confirmation {message_id}")
+            except Exception as e:
+                logger.error(f"Error handling quick-complete: {e}", exc_info=True)
+                ERRORS.labels(service="reflex", error_type="reaction_handler").inc()
+            return
+
+        # Not a tracked message
+        logger.debug(f"Ignoring reaction on non-tracked message {message_id}")
 
     async def handle_archive_entry(
-        self, reaction: discord.Reaction, user: discord.User, entry_id: int
+        self, reaction: discord.Reaction, user: discord.User, entry_id: int, source: str = "digest"
     ) -> None:
-        """Archive a specific entry.
+        """Archive a specific entry from a digest or capture confirmation.
 
         Args:
             reaction: Discord reaction
             user: User who reacted
             entry_id: Entry ID to archive
+            source: Source of the archive request ("digest" or "capture")
         """
         # Update entry to archived
         with self.pg_conn.cursor() as cur:
@@ -854,10 +904,15 @@ class ReflexBot(commands.Bot):
             )
         self.pg_conn.commit()
 
-        # Remove from tracking
-        del self.digest_message_to_entry[reaction.message.id]
+        # Remove from tracking (using pop() to avoid KeyError if user reacts twice quickly)
+        message_id = reaction.message.id
+        if source == "capture":
+            self.capture_message_to_entry.pop(message_id, None)
+            logger.info(f"Archived entry {entry_id} via quick-complete reaction")
+        else:  # "digest"
+            self.digest_message_to_entry.pop(message_id, None)
+            logger.info(f"Archived entry {entry_id} via digest reaction")
 
-        logger.info(f"Archived entry {entry_id} via digest reaction")
         await reaction.message.reply(f"{user.mention} - ✅ Archived!")
 
     async def handle_snooze_entry(
@@ -886,8 +941,8 @@ class ReflexBot(commands.Bot):
             )
         self.pg_conn.commit()
 
-        # Remove from tracking
-        del self.digest_message_to_entry[reaction.message.id]
+        # Remove from tracking (use pop for safety)
+        self.digest_message_to_entry.pop(reaction.message.id, None)
 
         logger.info(f"Snoozed entry {entry_id} for {label} until {snooze_until.date()}")
         await reaction.message.reply(
@@ -959,12 +1014,11 @@ class ReflexBot(commands.Bot):
             )
         self.pg_conn.commit()
 
-        # Remove entry from digest tracking if it still exists
-        if digest_message_id in self.digest_message_to_entry:
-            del self.digest_message_to_entry[digest_message_id]
+        # Remove entry from digest tracking if it still exists (use pop for safety)
+        self.digest_message_to_entry.pop(digest_message_id, None)
 
-        # Clear pending state
-        del self.snooze_pending[key]
+        # Clear pending state (use pop for safety)
+        self.snooze_pending.pop(key, None)
 
         logger.info(f"Snoozed entry {entry_id} until {snooze_until.date()} for user {message.author}")
         await message.reply(
@@ -996,9 +1050,10 @@ class ReflexBot(commands.Bot):
                 logger.error(f"Channel {self.reflex_channel_id} is not a text channel")
                 return
 
-            # Clear previous digest's message tracking to prevent memory leaks
+            # Clear previous message tracking (digest and capture) to prevent memory leaks
             # and acting on stale messages
             self.digest_message_to_entry.clear()
+            self.capture_message_to_entry.clear()
 
             # Query actionable entries (admin only) and info entries (everything else)
             action_rows = await asyncio.to_thread(self.storage.get_digest_entries)
