@@ -868,8 +868,21 @@ class ReflexBot(commands.Bot):
                     f"Quick-complete: {user} archiving entry {entry_id} (message {message_id})"
                 )
 
-                # Archive the entry
-                await self.handle_archive_entry(reaction, user, entry_id)
+                # Archive the entry (inline for capture messages)
+                with self.pg_conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE reflex_entries
+                        SET status = 'archived'
+                        WHERE id = %s
+                        """,
+                        (entry_id,),
+                    )
+                self.pg_conn.commit()
+
+                # Remove from tracking and reply
+                del self.capture_message_to_entry[reaction.message.id]
+                await reaction.message.reply(f"{user.mention} - ✅ Archived!")
 
             except discord.NotFound:
                 logger.warning(f"Could not find original message for capture confirmation {message_id}")
@@ -1048,6 +1061,7 @@ class ReflexBot(commands.Bot):
             # Clear previous digest's message tracking to prevent memory leaks
             # and acting on stale messages
             self.digest_message_to_entry.clear()
+            self.capture_message_to_entry.clear()
 
             # Query actionable entries (admin only) and info entries (everything else)
             action_rows = await asyncio.to_thread(self.storage.get_digest_entries)
