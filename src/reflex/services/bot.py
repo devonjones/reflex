@@ -127,6 +127,10 @@ class ReflexBot(commands.Bot):
     DIGEST_CATEGORY_ORDER = ["project", "admin", "person", "idea", "inbox"]
     DIGEST_REACTION_EMOJIS = ["✅", "⏰", "📅", "🕐", "🔁"]
     DIGEST_INFO_TITLE_MAX_LENGTH = 80
+    DAY_MAP = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
+    DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    DEFAULT_WEEKLY_DIGEST_HOUR = 16
+    WEEKLY_DIGEST_MAX_ENTRIES_PER_CATEGORY = 5
 
     def __init__(self) -> None:
         """Initialize bot."""
@@ -245,6 +249,23 @@ class ReflexBot(commands.Bot):
             logger.warning(f"Invalid REFLEX_DIGEST_DAILY_HOUR='{digest_hour_str}', using default {self.DEFAULT_DIGEST_HOUR}.")
             self.digest_hour = self.DEFAULT_DIGEST_HOUR
 
+        # Weekly digest schedule (default: Sunday 4pm)
+        weekly_day_str = os.getenv("REFLEX_DIGEST_WEEKLY_DAY", "sunday").lower()
+        weekly_hour_str = os.getenv("REFLEX_DIGEST_WEEKLY_HOUR", str(self.DEFAULT_WEEKLY_DIGEST_HOUR))
+
+        self.weekly_day = self.DAY_MAP.get(weekly_day_str, 6)  # Default to Sunday
+        if weekly_day_str not in self.DAY_MAP:
+            logger.warning(f"Invalid REFLEX_DIGEST_WEEKLY_DAY='{weekly_day_str}', using default 'sunday'")
+
+        try:
+            weekly_hour = int(weekly_hour_str)
+            if not 0 <= weekly_hour <= 23:
+                raise ValueError("Hour out of range")
+            self.weekly_hour = weekly_hour
+        except ValueError:
+            logger.warning(f"Invalid REFLEX_DIGEST_WEEKLY_HOUR='{weekly_hour_str}', using default {self.DEFAULT_WEEKLY_DIGEST_HOUR}")
+            self.weekly_hour = self.DEFAULT_WEEKLY_DIGEST_HOUR
+
         # State tracking for snooze prompts: (snooze_prompt_id, user_id) -> (entry_id, digest_message_id)
         self.snooze_pending: dict[tuple[int, int], tuple[int, int]] = {}
 
@@ -259,7 +280,7 @@ class ReflexBot(commands.Bot):
             logger.info(f"Bot ready: {self.user} (ID: {self.user.id}) - version {BOT_VERSION}")
         logger.info(f"Listening on channel ID: {self.reflex_channel_id}")
 
-        # Start scheduler for digest
+        # Start scheduler for digests
         if not self.scheduler.running:
             # Schedule daily digest at configured hour
             self.scheduler.add_job(
@@ -269,8 +290,21 @@ class ReflexBot(commands.Bot):
                 name=f"Daily Digest at {self.digest_hour}:00 UTC",
                 replace_existing=True,
             )
+
+            # Schedule weekly digest (default: Sunday 4pm)
+            self.scheduler.add_job(
+                self.generate_weekly_digest,
+                CronTrigger(day_of_week=self.weekly_day, hour=self.weekly_hour, minute=0),
+                id="weekly_digest",
+                name=f"Weekly Digest on {self.DAY_NAMES[self.weekly_day]} at {self.weekly_hour}:00 UTC",
+                replace_existing=True,
+            )
+
             self.scheduler.start()
-            logger.info(f"Scheduler started - daily digest scheduled for {self.digest_hour}:00 UTC")
+            logger.info(
+                f"Scheduler started - daily digest at {self.digest_hour}:00 UTC, "
+                f"weekly digest on {self.DAY_NAMES[self.weekly_day]} at {self.weekly_hour}:00 UTC"
+            )
 
         # Spawn background migration task
         asyncio.create_task(self.migrate_old_entries())
@@ -330,6 +364,19 @@ class ReflexBot(commands.Bot):
 
         # Close parent
         await super().close()
+
+    def _truncate_title(self, title: str) -> str:
+        """Truncate title if it exceeds max length.
+
+        Args:
+            title: Original title
+
+        Returns:
+            Truncated title with "..." if needed
+        """
+        if len(title) > self.DIGEST_INFO_TITLE_MAX_LENGTH:
+            return title[:self.DIGEST_INFO_TITLE_MAX_LENGTH - 3] + "..."
+        return title
 
     async def on_message(self, message: discord.Message) -> None:
         """Handle incoming messages.
@@ -793,11 +840,7 @@ class ReflexBot(commands.Bot):
                     emoji = self.DIGEST_CATEGORY_EMOJIS.get(category, "📝")
                     summary_parts.append(f"\n{emoji} **{category.title()}**")
                     for title in by_category[category]:
-                        # Truncate title if too long
-                        if len(title) > self.DIGEST_INFO_TITLE_MAX_LENGTH:
-                            display_title = title[:self.DIGEST_INFO_TITLE_MAX_LENGTH - 3] + "..."
-                        else:
-                            display_title = title
+                        display_title = self._truncate_title(title)
                         summary_parts.append(f"\n  • {display_title}")
 
                 await channel.send("".join(summary_parts))
@@ -809,6 +852,66 @@ class ReflexBot(commands.Bot):
         except Exception as e:
             logger.error(f"Failed to generate digest: {e}", exc_info=True)
             ERRORS.labels(service="reflex", error_type="digest_generation").inc()
+
+    async def generate_weekly_digest(self) -> None:
+        """Generate and send weekly digest to Discord channel.
+
+        Aggregates past 7 days of entries, grouped by category with counts.
+        Shows overall activity summary without individual message reactions.
+        """
+        logger.info("Generating weekly digest")
+
+        try:
+            # Get channel
+            if not self.reflex_channel_id:
+                logger.error("DISCORD_REFLEX_CHANNEL_ID not configured")
+                return
+
+            channel = self.get_channel(int(self.reflex_channel_id))
+            if not channel or not isinstance(channel, (discord.TextChannel, discord.Thread)):
+                logger.error(f"Reflex channel {self.reflex_channel_id} not found or not a text channel")
+                return
+
+            # Query weekly summary
+            by_category = await asyncio.to_thread(self.storage.get_weekly_summary)
+
+            # Calculate total entries
+            total_entries = sum(len(entries) for entries in by_category.values())
+
+            # Send header
+            await channel.send(
+                f"## Weekly Digest - {total_entries} entries captured this week"
+            )
+
+            # Send summary by category
+            if total_entries == 0:
+                await channel.send("_No entries captured this week_")
+                return
+
+            summary_parts = []
+            for category in self.DIGEST_CATEGORY_ORDER:
+                if category not in by_category:
+                    continue
+
+                entries = by_category[category]
+                emoji = self.DIGEST_CATEGORY_EMOJIS.get(category, "📝")
+                summary_parts.append(f"\n{emoji} **{category.title()}** ({len(entries)} entries)")
+
+                # Show up to max entries
+                for _, title, _, _ in entries[:self.WEEKLY_DIGEST_MAX_ENTRIES_PER_CATEGORY]:
+                    display_title = self._truncate_title(title)
+                    summary_parts.append(f"\n  • {display_title}")
+
+                if len(entries) > self.WEEKLY_DIGEST_MAX_ENTRIES_PER_CATEGORY:
+                    summary_parts.append(f"\n  _...and {len(entries) - self.WEEKLY_DIGEST_MAX_ENTRIES_PER_CATEGORY} more_")
+
+            await channel.send("".join(summary_parts))
+
+            logger.info(f"Sent weekly digest with {total_entries} entries")
+
+        except Exception as e:
+            logger.error(f"Failed to generate weekly digest: {e}", exc_info=True)
+            ERRORS.labels(service="reflex", error_type="weekly_digest_generation").inc()
 
 
 async def webhook_digest_handler(request: web.Request) -> web.Response:

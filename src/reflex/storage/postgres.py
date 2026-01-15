@@ -1,6 +1,7 @@
 """Postgres storage for Reflex entries."""
 
 import base64
+from collections import defaultdict
 from datetime import datetime
 from typing import Optional
 
@@ -436,3 +437,32 @@ class PostgresStorage:
             rows = cur.fetchall()
 
         return rows  # type: ignore[no-any-return]
+
+    def get_weekly_summary(self) -> dict[str, list[tuple[int, str, list[str], datetime]]]:
+        """Get weekly summary of entries (past 7 days).
+
+        Returns all entries captured in the past 7 days, grouped by category.
+        Used for weekly digest generation.
+
+        Returns:
+            Dict mapping category -> list of (id, title, tags, captured_at)
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, category, title, tags, captured_at
+                FROM reflex_entries
+                WHERE status = 'active'
+                  AND captured_at >= NOW() - INTERVAL '7 days'
+                ORDER BY category, captured_at DESC
+                """
+            )
+            rows = cur.fetchall()
+
+        # Group by category
+        by_category: dict[str, list[tuple[int, str, list[str], datetime]]] = defaultdict(list)
+        for row in rows:
+            entry_id, category, title, tags, captured_at = row
+            by_category[category].append((entry_id, title, tags, captured_at))
+
+        return by_category
