@@ -21,6 +21,7 @@ from prometheus_client import Counter, Histogram
 from reflex.migrations import BOT_VERSION, migrate_entry
 from reflex.models.entry import Entry
 from reflex.services.classifier import ReflexClassifier
+from reflex.services.commands import CommandParser, ParsedCommand
 from reflex.storage.exporter import MarkdownExporter
 from reflex.storage.postgres import PostgresStorage
 from reflex.utils.date_parser import parse_snooze_date
@@ -235,6 +236,9 @@ class ReflexBot(commands.Bot):
             litellm_url, tier1_model, tier2_model, tier1_threshold, tier2_threshold
         )
 
+        # Initialize command parser (use Tier 2 model for better accuracy)
+        self.command_parser = CommandParser(litellm_url, tier2_model)
+
         # Initialize scheduler for digest
         self.scheduler = AsyncIOScheduler(timezone=timezone.utc)
 
@@ -434,14 +438,11 @@ class ReflexBot(commands.Bot):
             is_command, confidence = self.classifier.validate_intent(message.content)
 
             if is_command and confidence >= self.classifier.tier2_threshold:
-                # It's a command
+                # It's a command - parse and execute
                 logger.info(
                     f"Confirmed command (confidence={confidence}): {message.content}"
                 )
-                await message.reply(
-                    f"Command detected (confidence: {confidence:.2f})\n\n"
-                    "⚠️ Command execution not yet implemented. Coming in Phase 3!"
-                )
+                await self.execute_command(message)
             else:
                 # False positive - treat as capture
                 logger.info(
@@ -454,6 +455,227 @@ class ReflexBot(commands.Bot):
             ERRORS.labels(service="reflex", error_type="intent_validation").inc()
             # Fall back to treating as capture
             await self.handle_capture(message)
+
+    async def execute_command(self, message: discord.Message) -> None:
+        """Execute a validated command.
+
+        Args:
+            message: Discord message containing the command
+        """
+        try:
+            # Parse command
+            parsed = await asyncio.to_thread(
+                self.command_parser.parse, message.content
+            )
+
+            if not parsed:
+                await message.reply("❌ Sorry, I couldn't understand that command.")
+                return
+
+            logger.info(
+                f"Parsed command: action={parsed.action}, target={parsed.target}, "
+                f"keywords={parsed.target_keywords}"
+            )
+
+            # Resolve target entry
+            target_entry = await self.resolve_target(message, parsed)
+            if not target_entry:
+                await message.reply(
+                    "❌ I couldn't find the entry you're referring to. "
+                    "Try being more specific or use keywords from the entry title."
+                )
+                return
+
+            # Execute action
+            if parsed.action == "move":
+                await self.execute_move(message, target_entry, parsed)
+            elif parsed.action == "tag":
+                await self.execute_tag(message, target_entry, parsed)
+            elif parsed.action == "archive":
+                await self.execute_archive(message, target_entry, parsed)
+            elif parsed.action == "show":
+                await self.execute_show(message, target_entry, parsed)
+            else:
+                await message.reply(f"❌ Unknown action: {parsed.action}")
+
+        except Exception as e:
+            logger.error(f"Command execution failed: {e}", exc_info=True)
+            ERRORS.labels(service="reflex", error_type="command_execution").inc()
+            await message.reply(
+                "❌ Something went wrong executing that command. Please try again."
+            )
+
+    async def resolve_target(
+        self, message: discord.Message, parsed: ParsedCommand
+    ) -> Optional[Entry]:
+        """Resolve which entry the command refers to.
+
+        Strategy:
+        1. Query recent entries from this channel (last 10)
+        2. Filter by keywords if provided
+        3. Return most recent match
+
+        Args:
+            message: Discord message
+            parsed: ParsedCommand
+
+        Returns:
+            Entry or None if not found
+        """
+        # Get recent entries from this channel
+        entries = await asyncio.to_thread(
+            self.storage.get_recent_entries,
+            str(message.channel.id),
+            limit=10,
+        )
+
+        if not entries:
+            logger.info("No recent entries found in channel")
+            return None
+
+        # Filter by keywords if provided
+        if parsed.target_keywords:
+            filtered = []
+            for entry in entries:
+                title_lower = entry.title.lower()
+                category_lower = entry.category.lower()
+                if any(
+                    kw.lower() in title_lower or kw.lower() in category_lower
+                    for kw in parsed.target_keywords
+                ):
+                    filtered.append(entry)
+
+            if filtered:
+                entries = filtered
+                logger.info(f"Filtered to {len(filtered)} entries by keywords")
+
+        # Return most recent
+        target = entries[0]
+        logger.info(f"Resolved target: entry_id={target.id}, title={target.title}")
+        return target
+
+    async def execute_move(
+        self, message: discord.Message, entry: Entry, parsed: ParsedCommand
+    ) -> None:
+        """Execute move command (change category).
+
+        Args:
+            message: Discord message
+            entry: Target entry
+            parsed: ParsedCommand
+        """
+        new_category = parsed.parameters.get("new_category")
+        if not new_category:
+            await message.reply("❌ No target category specified in move command.")
+            return
+
+        # Validate category
+        valid_categories = ["person", "project", "idea", "admin", "inbox"]
+        if new_category not in valid_categories:
+            await message.reply(
+                f"❌ Invalid category: {new_category}. "
+                f"Valid categories: {', '.join(valid_categories)}"
+            )
+            return
+
+        old_category = entry.category
+        entry.category = new_category
+
+        # Update in database
+        await asyncio.to_thread(self.storage.update_entry, entry)
+
+        # Re-export markdown (category affects file path)
+        if self.exporter:
+            await asyncio.to_thread(self.exporter.export_entry, entry)
+
+        await message.reply(
+            f"✅ Moved entry from **{old_category}** to **{new_category}**\n\n"
+            f"_{entry.title}_"
+        )
+        logger.info(f"Moved entry {entry.id} from {old_category} to {new_category}")
+
+    async def execute_tag(
+        self, message: discord.Message, entry: Entry, parsed: ParsedCommand
+    ) -> None:
+        """Execute tag command (add tags).
+
+        Args:
+            message: Discord message
+            entry: Target entry
+            parsed: ParsedCommand
+        """
+        new_tags = parsed.parameters.get("tags", [])
+        if not new_tags:
+            await message.reply("❌ No tags specified in tag command.")
+            return
+
+        # Add new tags (avoid duplicates)
+        existing_tags = set(entry.tags or [])
+        existing_tags.update(new_tags)
+        entry.tags = list(existing_tags)
+
+        # Update in database
+        await asyncio.to_thread(self.storage.update_entry, entry)
+
+        # Re-export markdown
+        if self.exporter:
+            await asyncio.to_thread(self.exporter.export_entry, entry)
+
+        await message.reply(
+            f"✅ Added tags: **{', '.join(new_tags)}**\n\n_{entry.title}_"
+        )
+        logger.info(f"Tagged entry {entry.id} with {new_tags}")
+
+    async def execute_archive(
+        self, message: discord.Message, entry: Entry, parsed: ParsedCommand
+    ) -> None:
+        """Execute archive command (set status=archived).
+
+        Args:
+            message: Discord message
+            entry: Target entry
+            parsed: ParsedCommand
+        """
+        entry.status = "archived"
+
+        # Update in database
+        await asyncio.to_thread(self.storage.update_entry, entry)
+
+        # Re-export markdown (status update reflected in frontmatter)
+        if self.exporter:
+            await asyncio.to_thread(self.exporter.export_entry, entry)
+
+        await message.reply(f"✅ Archived entry\n\n_{entry.title}_")
+        logger.info(f"Archived entry {entry.id}")
+
+    async def execute_show(
+        self, message: discord.Message, entry: Entry, parsed: ParsedCommand
+    ) -> None:
+        """Execute show command (display entry details).
+
+        Args:
+            message: Discord message
+            entry: Target entry
+            parsed: ParsedCommand
+        """
+        # Format entry details
+        tags_str = ", ".join(entry.tags) if entry.tags else "none"
+        captured_str = (
+            entry.captured_at.strftime('%Y-%m-%d %H:%M')
+            if entry.captured_at
+            else "unknown"
+        )
+        details = (
+            f"**{entry.title}**\n\n"
+            f"Category: {entry.category}\n"
+            f"Tags: {tags_str}\n"
+            f"Status: {entry.status}\n"
+            f"Captured: {captured_str}\n"
+            f"ID: {entry.id}"
+        )
+
+        await message.reply(details)
+        logger.info(f"Showed entry {entry.id}")
 
     async def handle_capture(self, message: discord.Message) -> None:
         """Handle message capture (classify and store).
