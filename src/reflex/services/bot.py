@@ -905,12 +905,13 @@ class ReflexBot(commands.Bot):
         self.pg_conn.commit()
 
         # Remove from tracking (depends on source)
+        # Use pop() to avoid KeyError if user reacts twice quickly
         message_id = reaction.message.id
         if source == "capture":
-            del self.capture_message_to_entry[message_id]
+            self.capture_message_to_entry.pop(message_id, None)
             logger.info(f"Archived entry {entry_id} via quick-complete reaction")
         else:  # "digest"
-            del self.digest_message_to_entry[message_id]
+            self.digest_message_to_entry.pop(message_id, None)
             logger.info(f"Archived entry {entry_id} via digest reaction")
 
         await reaction.message.reply(f"{user.mention} - ✅ Archived!")
@@ -941,8 +942,8 @@ class ReflexBot(commands.Bot):
             )
         self.pg_conn.commit()
 
-        # Remove from tracking
-        del self.digest_message_to_entry[reaction.message.id]
+        # Remove from tracking (use pop for safety)
+        self.digest_message_to_entry.pop(reaction.message.id, None)
 
         logger.info(f"Snoozed entry {entry_id} for {label} until {snooze_until.date()}")
         await reaction.message.reply(
@@ -1014,12 +1015,11 @@ class ReflexBot(commands.Bot):
             )
         self.pg_conn.commit()
 
-        # Remove entry from digest tracking if it still exists
-        if digest_message_id in self.digest_message_to_entry:
-            del self.digest_message_to_entry[digest_message_id]
+        # Remove entry from digest tracking if it still exists (use pop for safety)
+        self.digest_message_to_entry.pop(digest_message_id, None)
 
-        # Clear pending state
-        del self.snooze_pending[key]
+        # Clear pending state (use pop for safety)
+        self.snooze_pending.pop(key, None)
 
         logger.info(f"Snoozed entry {entry_id} until {snooze_until.date()} for user {message.author}")
         await message.reply(
