@@ -735,8 +735,8 @@ class ReflexBot(commands.Bot):
                 from collections import defaultdict
 
                 by_category: dict[str, list[tuple]] = defaultdict(list)
-                for row in info_rows:
-                    entry_id, category, title, tags, captured_at = row
+                for info_row in info_rows:
+                    entry_id, category, title, tags, captured_at = info_row
                     by_category[category].append((entry_id, title, tags, captured_at))
 
                 # Build summary message
