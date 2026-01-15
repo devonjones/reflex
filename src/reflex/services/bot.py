@@ -234,13 +234,14 @@ class ReflexBot(commands.Bot):
         self.scheduler = AsyncIOScheduler()
 
         # Digest schedule configuration (default: 7am daily)
+        digest_hour_str = os.getenv("REFLEX_DIGEST_DAILY_HOUR", "7")
         try:
-            self.digest_hour = int(os.getenv("REFLEX_DIGEST_DAILY_HOUR", "7"))
-            if not 0 <= self.digest_hour <= 23:
-                logger.warning(f"Invalid REFLEX_DIGEST_DAILY_HOUR={self.digest_hour}, using default 7")
-                self.digest_hour = 7
+            digest_hour = int(digest_hour_str)
+            if not 0 <= digest_hour <= 23:
+                raise ValueError("Hour out of range")
+            self.digest_hour = digest_hour
         except ValueError:
-            logger.warning(f"Invalid REFLEX_DIGEST_DAILY_HOUR, using default 7")
+            logger.warning(f"Invalid REFLEX_DIGEST_DAILY_HOUR='{digest_hour_str}', using default 7.")
             self.digest_hour = 7
 
         # State tracking for snooze prompts: (snooze_prompt_id, user_id) -> (entry_id, digest_message_id)
