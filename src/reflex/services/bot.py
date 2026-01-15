@@ -127,6 +127,9 @@ class ReflexBot(commands.Bot):
     DIGEST_CATEGORY_ORDER = ["project", "admin", "person", "idea", "inbox"]
     DIGEST_REACTION_EMOJIS = ["✅", "⏰", "📅", "🕐", "🔁"]
     DIGEST_INFO_TITLE_MAX_LENGTH = 80
+    DAY_MAP = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
+    DEFAULT_WEEKLY_DIGEST_HOUR = 16
+    WEEKLY_DIGEST_MAX_ENTRIES_PER_CATEGORY = 5
 
     def __init__(self) -> None:
         """Initialize bot."""
@@ -247,11 +250,10 @@ class ReflexBot(commands.Bot):
 
         # Weekly digest schedule (default: Sunday 4pm)
         weekly_day_str = os.getenv("REFLEX_DIGEST_WEEKLY_DAY", "sunday").lower()
-        weekly_hour_str = os.getenv("REFLEX_DIGEST_WEEKLY_HOUR", "16")
+        weekly_hour_str = os.getenv("REFLEX_DIGEST_WEEKLY_HOUR", str(self.DEFAULT_WEEKLY_DIGEST_HOUR))
 
-        day_map = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
-        self.weekly_day = day_map.get(weekly_day_str, 6)  # Default to Sunday
-        if weekly_day_str not in day_map:
+        self.weekly_day = self.DAY_MAP.get(weekly_day_str, 6)  # Default to Sunday
+        if weekly_day_str not in self.DAY_MAP:
             logger.warning(f"Invalid REFLEX_DIGEST_WEEKLY_DAY='{weekly_day_str}', using default 'sunday'")
 
         try:
@@ -260,8 +262,8 @@ class ReflexBot(commands.Bot):
                 raise ValueError("Hour out of range")
             self.weekly_hour = weekly_hour
         except ValueError:
-            logger.warning(f"Invalid REFLEX_DIGEST_WEEKLY_HOUR='{weekly_hour_str}', using default 16")
-            self.weekly_hour = 16
+            logger.warning(f"Invalid REFLEX_DIGEST_WEEKLY_HOUR='{weekly_hour_str}', using default {self.DEFAULT_WEEKLY_DIGEST_HOUR}")
+            self.weekly_hour = self.DEFAULT_WEEKLY_DIGEST_HOUR
 
         # State tracking for snooze prompts: (snooze_prompt_id, user_id) -> (entry_id, digest_message_id)
         self.snooze_pending: dict[tuple[int, int], tuple[int, int]] = {}
@@ -362,6 +364,19 @@ class ReflexBot(commands.Bot):
 
         # Close parent
         await super().close()
+
+    def _truncate_title(self, title: str) -> str:
+        """Truncate title if it exceeds max length.
+
+        Args:
+            title: Original title
+
+        Returns:
+            Truncated title with "..." if needed
+        """
+        if len(title) > self.DIGEST_INFO_TITLE_MAX_LENGTH:
+            return title[:self.DIGEST_INFO_TITLE_MAX_LENGTH - 3] + "..."
+        return title
 
     async def on_message(self, message: discord.Message) -> None:
         """Handle incoming messages.
@@ -825,11 +840,7 @@ class ReflexBot(commands.Bot):
                     emoji = self.DIGEST_CATEGORY_EMOJIS.get(category, "📝")
                     summary_parts.append(f"\n{emoji} **{category.title()}**")
                     for title in by_category[category]:
-                        # Truncate title if too long
-                        if len(title) > self.DIGEST_INFO_TITLE_MAX_LENGTH:
-                            display_title = title[:self.DIGEST_INFO_TITLE_MAX_LENGTH - 3] + "..."
-                        else:
-                            display_title = title
+                        display_title = self._truncate_title(title)
                         summary_parts.append(f"\n  • {display_title}")
 
                 await channel.send("".join(summary_parts))
@@ -886,17 +897,13 @@ class ReflexBot(commands.Bot):
                 emoji = self.DIGEST_CATEGORY_EMOJIS.get(category, "📝")
                 summary_parts.append(f"\n{emoji} **{category.title()}** ({len(entries)} entries)")
 
-                # Show up to 5 most recent entries
-                for entry_id, title, tags, captured_at in entries[:5]:
-                    # Truncate title if too long
-                    if len(title) > self.DIGEST_INFO_TITLE_MAX_LENGTH:
-                        display_title = title[:self.DIGEST_INFO_TITLE_MAX_LENGTH - 3] + "..."
-                    else:
-                        display_title = title
+                # Show up to max entries
+                for entry_id, title, tags, captured_at in entries[:self.WEEKLY_DIGEST_MAX_ENTRIES_PER_CATEGORY]:
+                    display_title = self._truncate_title(title)
                     summary_parts.append(f"\n  • {display_title}")
 
-                if len(entries) > 5:
-                    summary_parts.append(f"\n  _...and {len(entries) - 5} more_")
+                if len(entries) > self.WEEKLY_DIGEST_MAX_ENTRIES_PER_CATEGORY:
+                    summary_parts.append(f"\n  _...and {len(entries) - self.WEEKLY_DIGEST_MAX_ENTRIES_PER_CATEGORY} more_")
 
             await channel.send("".join(summary_parts))
 

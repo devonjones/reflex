@@ -1,6 +1,7 @@
 """Postgres storage for Reflex entries."""
 
 import base64
+from collections import defaultdict
 from datetime import datetime
 from typing import Optional
 
@@ -459,11 +460,9 @@ class PostgresStorage:
             rows = cur.fetchall()
 
         # Group by category
-        by_category: dict[str, list[tuple[int, str, list[str], datetime]]] = {}
+        by_category: dict[str, list[tuple[int, str, list[str], datetime]]] = defaultdict(list)
         for row in rows:
             entry_id, category, title, tags, captured_at = row
-            if category not in by_category:
-                by_category[category] = []
             by_category[category].append((entry_id, title, tags, captured_at))
 
         return by_category
