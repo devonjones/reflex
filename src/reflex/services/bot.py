@@ -123,6 +123,7 @@ class ReflexBot(commands.Bot):
     }
     DIGEST_CATEGORY_ORDER = ["project", "admin", "person", "idea", "inbox"]
     DIGEST_REACTION_EMOJIS = ["✅", "⏰", "📅", "🕐", "🔁"]
+    DIGEST_INFO_TITLE_MAX_LENGTH = 80
 
     def __init__(self) -> None:
         """Initialize bot."""
@@ -696,12 +697,12 @@ class ReflexBot(commands.Bot):
             # Send ONE MESSAGE PER ACTIONABLE ENTRY with reactions
             if action_rows:
                 await channel.send("**Action Items:**")
+                now = datetime.now(timezone.utc)
                 for row in action_rows:
                     entry_id, category, title, tags, captured_at, _ = row
                     emoji = self.DIGEST_CATEGORY_EMOJIS.get(category, "📝")
 
                     # Calculate age
-                    now = datetime.now(timezone.utc)
                     age_days = (now - captured_at).days
 
                     # Build message
@@ -732,20 +733,24 @@ class ReflexBot(commands.Bot):
                 await channel.send("**FYI - Reference Items:**")
 
                 # Group by category
-                by_category: dict[str, list[tuple]] = defaultdict(list)
+                by_category: dict[str, list[str]] = defaultdict(list)
                 for info_row in info_rows:
-                    entry_id, category, title, tags, captured_at = info_row
-                    by_category[category].append((entry_id, title, tags, captured_at))
+                    _, category, title, _, _ = info_row
+                    by_category[category].append(title)
 
                 # Build summary message
                 summary_parts = []
                 for category in sorted(by_category.keys()):
                     emoji = self.DIGEST_CATEGORY_EMOJIS.get(category, "📝")
                     summary_parts.append(f"\n{emoji} **{category.title()}**")
-                    for entry_id, title, tags, captured_at in by_category[category]:
+                    for title in by_category[category]:
                         # Truncate title if too long
-                        display_title = title[:80] + "..." if len(title) > 80 else title
-                        summary_parts.append(f"  • {display_title}")
+                        display_title = (
+                            title[:self.DIGEST_INFO_TITLE_MAX_LENGTH] + "..."
+                            if len(title) > self.DIGEST_INFO_TITLE_MAX_LENGTH
+                            else title
+                        )
+                        summary_parts.append(f"\n  • {display_title}")
 
                 await channel.send("".join(summary_parts))
 
