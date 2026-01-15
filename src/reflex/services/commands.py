@@ -104,14 +104,21 @@ Return ONLY valid JSON, no other text."""
                 parsed = json.loads(content)
             except json.JSONDecodeError:
                 # Try to extract JSON from markdown code block
-                if "```json" in content:
-                    json_str = content.split("```json")[1].split("```")[0].strip()
-                    parsed = json.loads(json_str)
-                elif "```" in content:
-                    json_str = content.split("```")[1].split("```")[0].strip()
-                    parsed = json.loads(json_str)
-                else:
-                    logger.error(f"Failed to parse LLM response as JSON: {content}")
+                try:
+                    if "```json" in content:
+                        json_str = content.split("```json")[1].split("```")[0].strip()
+                        parsed = json.loads(json_str)
+                    elif "```" in content:
+                        json_str = content.split("```")[1].split("```")[0].strip()
+                        parsed = json.loads(json_str)
+                    else:
+                        logger.error(f"Failed to parse LLM response as JSON: {content}")
+                        return None
+                except (json.JSONDecodeError, IndexError):
+                    logger.error(
+                        f"Failed to extract or parse JSON from markdown block: {content}",
+                        exc_info=True,
+                    )
                     return None
 
             # Validate required fields
