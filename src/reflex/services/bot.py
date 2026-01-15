@@ -821,7 +821,7 @@ class ReflexBot(commands.Bot):
             try:
                 # Dispatcher pattern for emoji reactions on digest messages
                 handler_map = {
-                    "✅": lambda r, u, e: self.handle_archive_entry(r, u, e),
+                    "✅": lambda r, u, e: self.handle_archive_entry(r, u, e, source="digest"),
                     "⏰": lambda r, u, e: self.handle_snooze_entry(r, u, e, days=7, label="1 week"),
                     "📅": lambda r, u, e: self.handle_snooze_entry(r, u, e, days=30, label="1 month"),
                     "🕐": lambda r, u, e: self.handle_snooze_entry_custom(r, u, e),
@@ -904,8 +904,7 @@ class ReflexBot(commands.Bot):
             )
         self.pg_conn.commit()
 
-        # Remove from tracking (depends on source)
-        # Use pop() to avoid KeyError if user reacts twice quickly
+        # Remove from tracking (using pop() to avoid KeyError if user reacts twice quickly)
         message_id = reaction.message.id
         if source == "capture":
             self.capture_message_to_entry.pop(message_id, None)
@@ -1051,7 +1050,7 @@ class ReflexBot(commands.Bot):
                 logger.error(f"Channel {self.reflex_channel_id} is not a text channel")
                 return
 
-            # Clear previous digest's message tracking to prevent memory leaks
+            # Clear previous message tracking (digest and capture) to prevent memory leaks
             # and acting on stale messages
             self.digest_message_to_entry.clear()
             self.capture_message_to_entry.clear()
