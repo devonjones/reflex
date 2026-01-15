@@ -4,6 +4,7 @@ import asyncio
 import hmac
 import os
 import re
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -688,7 +689,6 @@ class ReflexBot(commands.Bot):
                 return
 
             # Send header message
-            total_count = len(action_rows) + len(info_rows)
             await channel.send(
                 f"## Daily Digest - {len(action_rows)} action items, {len(info_rows)} FYI"
             )
@@ -729,11 +729,9 @@ class ReflexBot(commands.Bot):
 
             # Send info entries as a single summary (no reactions)
             if info_rows:
-                await channel.send("\n**FYI - Reference Items:**")
+                await channel.send("**FYI - Reference Items:**")
 
                 # Group by category
-                from collections import defaultdict
-
                 by_category: dict[str, list[tuple]] = defaultdict(list)
                 for info_row in info_rows:
                     entry_id, category, title, tags, captured_at = info_row
