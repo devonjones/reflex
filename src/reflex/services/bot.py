@@ -116,6 +116,7 @@ class ReflexBot(commands.Bot):
     """Discord bot for Reflex."""
 
     # Digest constants
+    DEFAULT_DIGEST_HOUR = 7
     DIGEST_CATEGORY_EMOJIS = {
         "person": "👤",
         "project": "📋",
@@ -234,16 +235,15 @@ class ReflexBot(commands.Bot):
         self.scheduler = AsyncIOScheduler(timezone=timezone.utc)
 
         # Digest schedule configuration (default: 7am daily)
-        DEFAULT_DIGEST_HOUR = 7
-        digest_hour_str = os.getenv("REFLEX_DIGEST_DAILY_HOUR", str(DEFAULT_DIGEST_HOUR))
+        digest_hour_str = os.getenv("REFLEX_DIGEST_DAILY_HOUR", str(self.DEFAULT_DIGEST_HOUR))
         try:
             digest_hour = int(digest_hour_str)
             if not 0 <= digest_hour <= 23:
                 raise ValueError("Hour out of range")
             self.digest_hour = digest_hour
         except ValueError:
-            logger.warning(f"Invalid REFLEX_DIGEST_DAILY_HOUR='{digest_hour_str}', using default {DEFAULT_DIGEST_HOUR}.")
-            self.digest_hour = DEFAULT_DIGEST_HOUR
+            logger.warning(f"Invalid REFLEX_DIGEST_DAILY_HOUR='{digest_hour_str}', using default {self.DEFAULT_DIGEST_HOUR}.")
+            self.digest_hour = self.DEFAULT_DIGEST_HOUR
 
         # State tracking for snooze prompts: (snooze_prompt_id, user_id) -> (entry_id, digest_message_id)
         self.snooze_pending: dict[tuple[int, int], tuple[int, int]] = {}
