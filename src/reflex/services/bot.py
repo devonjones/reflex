@@ -231,18 +231,19 @@ class ReflexBot(commands.Bot):
         )
 
         # Initialize scheduler for digest
-        self.scheduler = AsyncIOScheduler()
+        self.scheduler = AsyncIOScheduler(timezone=timezone.utc)
 
         # Digest schedule configuration (default: 7am daily)
-        digest_hour_str = os.getenv("REFLEX_DIGEST_DAILY_HOUR", "7")
+        DEFAULT_DIGEST_HOUR = 7
+        digest_hour_str = os.getenv("REFLEX_DIGEST_DAILY_HOUR", str(DEFAULT_DIGEST_HOUR))
         try:
             digest_hour = int(digest_hour_str)
             if not 0 <= digest_hour <= 23:
                 raise ValueError("Hour out of range")
             self.digest_hour = digest_hour
         except ValueError:
-            logger.warning(f"Invalid REFLEX_DIGEST_DAILY_HOUR='{digest_hour_str}', using default 7.")
-            self.digest_hour = 7
+            logger.warning(f"Invalid REFLEX_DIGEST_DAILY_HOUR='{digest_hour_str}', using default {DEFAULT_DIGEST_HOUR}.")
+            self.digest_hour = DEFAULT_DIGEST_HOUR
 
         # State tracking for snooze prompts: (snooze_prompt_id, user_id) -> (entry_id, digest_message_id)
         self.snooze_pending: dict[tuple[int, int], tuple[int, int]] = {}
@@ -265,11 +266,11 @@ class ReflexBot(commands.Bot):
                 self.generate_digest,
                 CronTrigger(hour=self.digest_hour, minute=0),
                 id="daily_digest",
-                name=f"Daily Digest at {self.digest_hour}:00",
+                name=f"Daily Digest at {self.digest_hour}:00 UTC",
                 replace_existing=True,
             )
             self.scheduler.start()
-            logger.info(f"Scheduler started - daily digest scheduled for {self.digest_hour}:00")
+            logger.info(f"Scheduler started - daily digest scheduled for {self.digest_hour}:00 UTC")
 
         # Spawn background migration task
         asyncio.create_task(self.migrate_old_entries())
