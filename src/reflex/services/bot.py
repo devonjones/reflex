@@ -740,16 +740,18 @@ class ReflexBot(commands.Bot):
 
                 # Build summary message
                 summary_parts = []
-                for category in sorted(by_category.keys()):
+                for category in self.DIGEST_CATEGORY_ORDER:
+                    if category not in by_category:
+                        continue
+
                     emoji = self.DIGEST_CATEGORY_EMOJIS.get(category, "📝")
                     summary_parts.append(f"\n{emoji} **{category.title()}**")
                     for title in by_category[category]:
                         # Truncate title if too long
-                        display_title = (
-                            title[:self.DIGEST_INFO_TITLE_MAX_LENGTH] + "..."
-                            if len(title) > self.DIGEST_INFO_TITLE_MAX_LENGTH
-                            else title
-                        )
+                        if len(title) > self.DIGEST_INFO_TITLE_MAX_LENGTH:
+                            display_title = title[:self.DIGEST_INFO_TITLE_MAX_LENGTH - 3] + "..."
+                        else:
+                            display_title = title
                         summary_parts.append(f"\n  • {display_title}")
 
                 await channel.send("".join(summary_parts))
