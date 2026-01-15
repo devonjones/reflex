@@ -128,6 +128,7 @@ class ReflexBot(commands.Bot):
     DIGEST_REACTION_EMOJIS = ["✅", "⏰", "📅", "🕐", "🔁"]
     DIGEST_INFO_TITLE_MAX_LENGTH = 80
     DAY_MAP = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
+    DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     DEFAULT_WEEKLY_DIGEST_HOUR = 16
     WEEKLY_DIGEST_MAX_ENTRIES_PER_CATEGORY = 5
 
@@ -291,19 +292,18 @@ class ReflexBot(commands.Bot):
             )
 
             # Schedule weekly digest (default: Sunday 4pm)
-            day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
             self.scheduler.add_job(
                 self.generate_weekly_digest,
                 CronTrigger(day_of_week=self.weekly_day, hour=self.weekly_hour, minute=0),
                 id="weekly_digest",
-                name=f"Weekly Digest on {day_names[self.weekly_day]} at {self.weekly_hour}:00 UTC",
+                name=f"Weekly Digest on {self.DAY_NAMES[self.weekly_day]} at {self.weekly_hour}:00 UTC",
                 replace_existing=True,
             )
 
             self.scheduler.start()
             logger.info(
                 f"Scheduler started - daily digest at {self.digest_hour}:00 UTC, "
-                f"weekly digest on {day_names[self.weekly_day]} at {self.weekly_hour}:00 UTC"
+                f"weekly digest on {self.DAY_NAMES[self.weekly_day]} at {self.weekly_hour}:00 UTC"
             )
 
         # Spawn background migration task
