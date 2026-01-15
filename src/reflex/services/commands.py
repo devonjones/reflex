@@ -2,7 +2,7 @@
 
 import json
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import httpx
 from cortex_utils.logging import get_logger
@@ -14,7 +14,7 @@ logger = get_logger(__name__)
 class ParsedCommand:
     """Structured representation of a parsed command."""
 
-    action: str  # move, tag, archive, show
+    action: Literal["move", "tag", "archive", "show"]
     target: str  # that, this, the last, recent
     target_keywords: list[str]  # Keywords to help resolve target
     parameters: dict[str, Any]  # Action-specific parameters
