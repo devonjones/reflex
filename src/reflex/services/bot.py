@@ -898,7 +898,7 @@ class ReflexBot(commands.Bot):
                 summary_parts.append(f"\n{emoji} **{category.title()}** ({len(entries)} entries)")
 
                 # Show up to max entries
-                for entry_id, title, tags, captured_at in entries[:self.WEEKLY_DIGEST_MAX_ENTRIES_PER_CATEGORY]:
+                for _, title, _, _ in entries[:self.WEEKLY_DIGEST_MAX_ENTRIES_PER_CATEGORY]:
                     display_title = self._truncate_title(title)
                     summary_parts.append(f"\n  • {display_title}")
 
