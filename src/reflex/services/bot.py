@@ -4,6 +4,7 @@ import asyncio
 import hmac
 import os
 import re
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -122,6 +123,7 @@ class ReflexBot(commands.Bot):
     }
     DIGEST_CATEGORY_ORDER = ["project", "admin", "person", "idea", "inbox"]
     DIGEST_REACTION_EMOJIS = ["✅", "⏰", "📅", "🕐", "🔁"]
+    DIGEST_INFO_TITLE_MAX_LENGTH = 80
 
     def __init__(self) -> None:
         """Initialize bot."""
@@ -652,7 +654,9 @@ class ReflexBot(commands.Bot):
     async def generate_digest(self) -> None:
         """Generate and send daily digest to Discord channel.
 
-        Sends ONE MESSAGE PER ACTIONABLE ENTRY with individual reactions.
+        Sends:
+        1. ONE MESSAGE PER ACTIONABLE ENTRY (admin only) with reaction buttons
+        2. A single summary message with all info entries (person, idea, inbox, project)
         """
         logger.info("Generating daily digest")
 
@@ -676,50 +680,85 @@ class ReflexBot(commands.Bot):
             # and acting on stale messages
             self.digest_message_to_entry.clear()
 
-            # Query actionable entries (admin, project) WHERE next_action_date IS NULL OR <= NOW()
-            rows = await asyncio.to_thread(self.storage.get_digest_entries)
+            # Query actionable entries (admin only) and info entries (everything else)
+            action_rows = await asyncio.to_thread(self.storage.get_digest_entries)
+            info_rows = await asyncio.to_thread(self.storage.get_digest_info_entries)
 
-            if not rows:
+            if not action_rows and not info_rows:
                 logger.info("No entries to show in digest")
-                await channel.send("## Daily Digest\n\nNo actionable items today! 🎉")
+                await channel.send("## Daily Digest\n\nNo entries today! 🎉")
                 return
 
             # Send header message
-            await channel.send(f"## Daily Digest - {len(rows)} items need attention")
+            await channel.send(
+                f"## Daily Digest - {len(action_rows)} action items, {len(info_rows)} FYI"
+            )
 
-            # Send ONE MESSAGE PER ENTRY with reactions
-            for row in rows:
-                entry_id, category, title, tags, captured_at, _ = row
-                emoji = self.DIGEST_CATEGORY_EMOJIS.get(category, "📝")
-
-                # Calculate age
+            # Send ONE MESSAGE PER ACTIONABLE ENTRY with reactions
+            if action_rows:
+                await channel.send("**Action Items:**")
                 now = datetime.now(timezone.utc)
-                age_days = (now - captured_at).days
+                for row in action_rows:
+                    entry_id, category, title, tags, captured_at, _ = row
+                    emoji = self.DIGEST_CATEGORY_EMOJIS.get(category, "📝")
 
-                # Build message
-                message_parts = [f"{emoji} **{title}**\n"]
-                if tags:
-                    message_parts.append(f"*Tags: {', '.join(tags)}*\n")
-                message_parts.append(f"*Captured: {age_days} days ago*")
+                    # Calculate age
+                    age_days = (now - captured_at).days
 
-                # Warn if old
-                if age_days > 7:
-                    message_parts.append(f"\n📌 Open for {age_days} days. Still relevant?")
+                    # Build message
+                    message_parts = [f"{emoji} **{title}**\n"]
+                    if tags:
+                        message_parts.append(f"*Tags: {', '.join(tags)}*\n")
+                    message_parts.append(f"*Captured: {age_days} days ago*")
 
-                # Send entry message
-                entry_message = "".join(message_parts)
-                sent_message = await channel.send(entry_message)
+                    # Warn if old
+                    if age_days > 7:
+                        message_parts.append(f"\n📌 Open for {age_days} days. Still relevant?")
 
-                # Add reaction options to THIS entry
-                for emoji_reaction in ["✅", "⏰", "📅", "🕐"]:
-                    await sent_message.add_reaction(emoji_reaction)
+                    # Send entry message
+                    entry_message = "".join(message_parts)
+                    sent_message = await channel.send(entry_message)
 
-                # Track message_id -> entry_id mapping
-                self.digest_message_to_entry[sent_message.id] = entry_id
+                    # Add reaction options to THIS entry
+                    for emoji_reaction in ["✅", "⏰", "📅", "🕐"]:
+                        await sent_message.add_reaction(emoji_reaction)
 
-                logger.info(f"Sent digest entry {entry_id} (message ID: {sent_message.id})")
+                    # Track message_id -> entry_id mapping
+                    self.digest_message_to_entry[sent_message.id] = entry_id
 
-            logger.info(f"Sent digest with {len(rows)} individual entry messages")
+                    logger.info(f"Sent digest entry {entry_id} (message ID: {sent_message.id})")
+
+            # Send info entries as a single summary (no reactions)
+            if info_rows:
+                await channel.send("**FYI - Reference Items:**")
+
+                # Group by category
+                by_category: dict[str, list[str]] = defaultdict(list)
+                for info_row in info_rows:
+                    _, category, title, _, _ = info_row
+                    by_category[category].append(title)
+
+                # Build summary message
+                summary_parts = []
+                for category in self.DIGEST_CATEGORY_ORDER:
+                    if category not in by_category:
+                        continue
+
+                    emoji = self.DIGEST_CATEGORY_EMOJIS.get(category, "📝")
+                    summary_parts.append(f"\n{emoji} **{category.title()}**")
+                    for title in by_category[category]:
+                        # Truncate title if too long
+                        if len(title) > self.DIGEST_INFO_TITLE_MAX_LENGTH:
+                            display_title = title[:self.DIGEST_INFO_TITLE_MAX_LENGTH - 3] + "..."
+                        else:
+                            display_title = title
+                        summary_parts.append(f"\n  • {display_title}")
+
+                await channel.send("".join(summary_parts))
+
+            logger.info(
+                f"Sent digest with {len(action_rows)} action items and {len(info_rows)} info items"
+            )
 
         except Exception as e:
             logger.error(f"Failed to generate digest: {e}", exc_info=True)

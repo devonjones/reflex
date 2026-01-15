@@ -378,14 +378,15 @@ class PostgresStorage:
         return entries
 
     def get_digest_entries(self) -> list[tuple[int, str, str, list[str], datetime, Optional[datetime]]]:
-        """Get actionable entries for digest display.
+        """Get actionable entries for digest display (admin items only).
 
         Returns entries where:
         - status='active' AND
         - (next_action_date IS NULL OR <= NOW()) AND
-        - actionable=true
+        - actionable=true AND
+        - category='admin'
 
-        Ordered by category and captured_at DESC.
+        Ordered by captured_at DESC.
 
         Returns:
             List of tuples: (id, category, title, tags, captured_at, next_action_date)
@@ -398,6 +399,37 @@ class PostgresStorage:
                 WHERE status = 'active'
                   AND (next_action_date IS NULL OR next_action_date <= NOW())
                   AND actionable = true
+                  AND category = 'admin'
+                ORDER BY captured_at DESC
+                """
+            )
+            rows = cur.fetchall()
+
+        return rows  # type: ignore[no-any-return]
+
+    def get_digest_info_entries(self) -> list[tuple[int, str, str, list[str], datetime]]:
+        """Get informational entries for digest display (non-actionable items).
+
+        Returns all active entries that are NOT in the actionable digest:
+        - status='active' AND
+        - (next_action_date IS NULL OR <= NOW()) AND
+        - (actionable=false OR category != 'admin')
+
+        These are shown as FYI in a summary section, not as individual action items.
+
+        Ordered by category, captured_at DESC.
+
+        Returns:
+            List of tuples: (id, category, title, tags, captured_at)
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, category, title, tags, captured_at
+                FROM reflex_entries
+                WHERE status = 'active'
+                  AND (next_action_date IS NULL OR next_action_date <= NOW())
+                  AND (actionable = false OR category != 'admin')
                 ORDER BY category, captured_at DESC
                 """
             )
