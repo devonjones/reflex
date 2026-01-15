@@ -767,16 +767,16 @@ class ReflexBot(commands.Bot):
 
         # Send confirmation
         await message.add_reaction("✅")
-        reply = await message.reply(
+        await message.reply(
             f"**Filed as {result.category}** - {title}\n"
             f"*Confidence: {result.confidence:.2f}*\n"
             f"*Tags: {', '.join(result.suggested_tags) if result.suggested_tags else 'none'}*\n"
             f"*Reasoning: {result.reasoning}*"
         )
 
-        # Track reply message for quick-complete
-        self.capture_message_to_entry[reply.id] = entry_id
-        logger.debug(f"Tracking capture message {reply.id} -> entry {entry_id}")
+        # Track original message for quick-complete (user clicks ✅ on their own message)
+        self.capture_message_to_entry[message.id] = entry_id
+        logger.debug(f"Tracking capture message {message.id} -> entry {entry_id}")
 
     async def on_error(self, event_method: str, *args: object, **kwargs: object) -> None:
         """Handle errors in event handlers.
@@ -790,7 +790,7 @@ class ReflexBot(commands.Bot):
     async def on_reaction_add(
         self, reaction: discord.Reaction, user: discord.User
     ) -> None:
-        """Handle emoji reactions on digest entry messages and capture confirmations.
+        """Handle emoji reactions on digest messages and captured user messages.
 
         Args:
             reaction: Discord reaction
@@ -804,16 +804,12 @@ class ReflexBot(commands.Bot):
         if str(reaction.message.channel.id) != self.reflex_channel_id:
             return
 
-        # Only handle reactions on bot's messages
-        if reaction.message.author != self.user:
-            return
-
         message_id = reaction.message.id
         emoji = str(reaction.emoji)
 
-        # Check if this is a digest entry message
+        # Check if this is a digest entry message (bot's messages)
         entry_id = self.digest_message_to_entry.get(message_id)
-        if entry_id:
+        if entry_id and reaction.message.author == self.user:
             logger.info(
                 f"Reaction {emoji} from {user} on digest entry {entry_id} (message {message_id})"
             )
@@ -838,7 +834,7 @@ class ReflexBot(commands.Bot):
                 ERRORS.labels(service="reflex", error_type="reaction_handler").inc()
             return
 
-        # Check if this is a capture confirmation message
+        # Check if this is a captured user message (user clicks ✅ on their own message)
         entry_id = self.capture_message_to_entry.get(message_id)
         if entry_id:
             # Only handle ✅ for quick-complete on capture messages
@@ -846,33 +842,20 @@ class ReflexBot(commands.Bot):
                 logger.debug(f"Ignoring {emoji} on capture message (only ✅ supported)")
                 return
 
-            # Get the original message to verify the user is the author
+            # Only allow the original message author to quick-complete
+            if user.id != reaction.message.author.id:
+                logger.debug(
+                    f"User {user} tried to complete entry {entry_id} but is not original author"
+                )
+                return
+
+            logger.info(
+                f"Quick-complete: {user} archiving entry {entry_id} (message {message_id})"
+            )
+
             try:
-                # The capture confirmation is a reply, so we can get the referenced message
-                if not reaction.message.reference or not reaction.message.reference.message_id:
-                    logger.warning(f"Capture message {message_id} has no reference to original")
-                    return
-
-                original_message = await reaction.message.channel.fetch_message(
-                    reaction.message.reference.message_id
-                )
-
-                # Only allow the original author to quick-complete
-                if user.id != original_message.author.id:
-                    logger.debug(
-                        f"User {user} tried to complete entry {entry_id} but is not original author"
-                    )
-                    return
-
-                logger.info(
-                    f"Quick-complete: {user} archiving entry {entry_id} (message {message_id})"
-                )
-
                 # Archive the entry using shared handler
                 await self.handle_archive_entry(reaction, user, entry_id, source="capture")
-
-            except discord.NotFound:
-                logger.warning(f"Could not find original message for capture confirmation {message_id}")
             except Exception as e:
                 logger.error(f"Error handling quick-complete: {e}", exc_info=True)
                 ERRORS.labels(service="reflex", error_type="reaction_handler").inc()
