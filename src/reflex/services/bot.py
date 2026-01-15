@@ -321,7 +321,7 @@ class ReflexBot(commands.Bot):
 
         # Stop scheduler
         if self.scheduler.running:
-            self.scheduler.shutdown()
+            await asyncio.to_thread(self.scheduler.shutdown)
             logger.info("Scheduler stopped")
 
         # Close parent
