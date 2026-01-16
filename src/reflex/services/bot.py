@@ -380,11 +380,11 @@ class ReflexBot(commands.Bot):
         # Close parent
         await super().close()
 
-    async def _close_component(self, component: object, name: str) -> None:
+    async def _close_component(self, component: Optional[object], name: str) -> None:
         """Safely close a component, running its sync close method in a thread.
 
         Args:
-            component: The component to close (must have a close() method)
+            component: The component to close (must have a close() method), or None
             name: Human-readable name for logging
         """
         if not component:

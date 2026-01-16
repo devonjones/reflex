@@ -473,4 +473,4 @@ class PostgresStorage:
         Should be called during graceful shutdown to ensure clean resource cleanup.
         """
         self.http_client.close()
-        logger.info("Closed HTTP client")
+        logger.info("Closed PostgresStorage HTTP client")
