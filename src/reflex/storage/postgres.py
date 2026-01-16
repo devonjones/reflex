@@ -468,7 +468,7 @@ class PostgresStorage:
         return by_category
 
     def close(self) -> None:
-        """Close HTTP client and database connections.
+        """Close HTTP client.
 
         Should be called during graceful shutdown to ensure clean resource cleanup.
         """

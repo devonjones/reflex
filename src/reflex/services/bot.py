@@ -372,26 +372,29 @@ class ReflexBot(commands.Bot):
             except Exception:
                 logger.error("Error during scheduler shutdown, continuing...", exc_info=True)
 
-        # Close storage layer (HTTP client cleanup)
-        if self.storage:
-            logger.info("Closing storage layer...")
-            try:
-                await asyncio.to_thread(self.storage.close)
-                logger.info("Storage layer closed")
-            except Exception:
-                logger.error("Error closing storage layer, continuing...", exc_info=True)
-
-        # Close command parser (HTTP client cleanup)
-        if self.command_parser:
-            logger.info("Closing command parser...")
-            try:
-                await asyncio.to_thread(self.command_parser.close)
-                logger.info("Command parser closed")
-            except Exception:
-                logger.error("Error closing command parser, continuing...", exc_info=True)
+        # Close components with helper method
+        await self._close_component(self.storage, "storage layer")
+        await self._close_component(self.command_parser, "command parser")
+        await self._close_component(self.pg_conn, "postgres connection")
 
         # Close parent
         await super().close()
+
+    async def _close_component(self, component: object, name: str) -> None:
+        """Safely close a component, running its sync close method in a thread.
+
+        Args:
+            component: The component to close (must have a close() method)
+            name: Human-readable name for logging
+        """
+        if not component:
+            return
+        logger.info(f"Closing {name}...")
+        try:
+            await asyncio.to_thread(component.close)
+            logger.info(f"{name.capitalize()} closed")
+        except Exception:
+            logger.error(f"Error closing {name}, continuing...", exc_info=True)
 
     def _truncate_title(self, title: str) -> str:
         """Truncate title if it exceeds max length.
