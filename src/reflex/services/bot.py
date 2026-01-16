@@ -6,7 +6,7 @@ import os
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, Protocol
 
 import discord
 import psycopg2
@@ -29,6 +29,16 @@ from reflex.utils.date_parser import parse_snooze_date
 # Configure logging
 configure_logging("reflex", level=os.getenv("LOG_LEVEL", "INFO"))
 logger = get_logger(__name__)
+
+
+# Protocol for objects with close() method
+class Closable(Protocol):
+    """Protocol for objects that have a close() method."""
+
+    def close(self) -> None:
+        """Close the resource."""
+        ...
+
 
 # Metrics
 CAPTURES_TOTAL = Counter(
@@ -380,7 +390,7 @@ class ReflexBot(commands.Bot):
         # Close parent
         await super().close()
 
-    async def _close_component(self, component: Optional[object], name: str) -> None:
+    async def _close_component(self, component: Optional[Closable], name: str) -> None:
         """Safely close a component, running its sync close method in a thread.
 
         Args:
