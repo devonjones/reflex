@@ -6,7 +6,7 @@ import os
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, Protocol
 
 import discord
 import psycopg2
@@ -29,6 +29,16 @@ from reflex.utils.date_parser import parse_snooze_date
 # Configure logging
 configure_logging("reflex", level=os.getenv("LOG_LEVEL", "INFO"))
 logger = get_logger(__name__)
+
+
+# Protocol for objects with close() method
+class Closable(Protocol):
+    """Protocol for objects that have a close() method."""
+
+    def close(self) -> None:
+        """Close the resource."""
+        ...
+
 
 # Metrics
 CAPTURES_TOTAL = Counter(
@@ -372,8 +382,29 @@ class ReflexBot(commands.Bot):
             except Exception:
                 logger.error("Error during scheduler shutdown, continuing...", exc_info=True)
 
+        # Close components with helper method
+        await self._close_component(self.storage, "storage layer")
+        await self._close_component(self.command_parser, "command parser")
+        await self._close_component(self.pg_conn, "postgres connection")
+
         # Close parent
         await super().close()
+
+    async def _close_component(self, component: Optional[Closable], name: str) -> None:
+        """Safely close a component, running its sync close method in a thread.
+
+        Args:
+            component: The component to close (must have a close() method), or None
+            name: Human-readable name for logging
+        """
+        if not component:
+            return
+        logger.info(f"Closing {name}...")
+        try:
+            await asyncio.to_thread(component.close)
+            logger.info(f"{name.capitalize()} closed")
+        except Exception:
+            logger.error(f"Error closing {name}, continuing...", exc_info=True)
 
     def _truncate_title(self, title: str) -> str:
         """Truncate title if it exceeds max length.
