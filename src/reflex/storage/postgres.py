@@ -466,3 +466,11 @@ class PostgresStorage:
             by_category[category].append((entry_id, title, tags, captured_at))
 
         return by_category
+
+    def close(self) -> None:
+        """Close HTTP client and database connections.
+
+        Should be called during graceful shutdown to ensure clean resource cleanup.
+        """
+        self.http_client.close()
+        logger.info("Closed HTTP client")

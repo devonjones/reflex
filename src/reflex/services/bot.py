@@ -372,6 +372,24 @@ class ReflexBot(commands.Bot):
             except Exception:
                 logger.error("Error during scheduler shutdown, continuing...", exc_info=True)
 
+        # Close storage layer (HTTP client cleanup)
+        if self.storage:
+            logger.info("Closing storage layer...")
+            try:
+                await asyncio.to_thread(self.storage.close)
+                logger.info("Storage layer closed")
+            except Exception:
+                logger.error("Error closing storage layer, continuing...", exc_info=True)
+
+        # Close command parser (HTTP client cleanup)
+        if self.command_parser:
+            logger.info("Closing command parser...")
+            try:
+                await asyncio.to_thread(self.command_parser.close)
+                logger.info("Command parser closed")
+            except Exception:
+                logger.error("Error closing command parser, continuing...", exc_info=True)
+
         # Close parent
         await super().close()
 

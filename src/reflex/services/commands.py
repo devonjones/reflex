@@ -140,3 +140,11 @@ Return ONLY valid JSON, no other text."""
         except Exception as e:
             logger.error(f"Command parsing failed: {e}", exc_info=True)
             return None
+
+    def close(self) -> None:
+        """Close HTTP client.
+
+        Should be called during graceful shutdown to ensure clean resource cleanup.
+        """
+        self.http_client.close()
+        logger.info("Closed CommandParser HTTP client")
