@@ -52,6 +52,14 @@ Return JSON:
 """
 
 
+# THE CLOSED SET the model's output is validated against. docs/agent-isolation
+# requires this: "the model's output is validated against a closed set before
+# anything acts on it." It already existed as bot.py's VALID_CATEGORIES, where
+# it guarded the move-command parse and NOT this -- the classification that
+# decides where a capture is filed. Same list, now applied to both.
+VALID_CATEGORIES = frozenset({"person", "project", "idea", "admin", "inbox"})
+
+
 class ReflexClassifier:
     """Two-tier LLM classifier for Reflex captures."""
 
@@ -216,14 +224,27 @@ class ReflexClassifier:
             content = self.llm._get_content_from_response(result_dict)
             data = json.loads(content)
 
-            # Parse fields
-            category = data.get("category", "inbox")
-            raw_confidence = data.get("confidence", 0.5)
+            # PRESENCE, then the closed set. A default turns "the model said
+            # nothing" into "the model said this", and nothing downstream can
+            # tell the difference. `category` defaulted to "inbox" -- a real
+            # category -- so a truncated response filed a capture rather than
+            # failing. `confidence` defaulted to 0.5, a mid-range number that
+            # reads as a considered judgement; classify() compares it against
+            # tier1_threshold to decide whether to escalate.
+            if "category" not in data:
+                raise LLMError("classification has no 'category'; response is incomplete")
+            category = data["category"]
+            if category not in VALID_CATEGORIES:
+                raise LLMError(
+                    f"model returned category {category!r}, which is not one of "
+                    f"{sorted(VALID_CATEGORIES)}"
+                )
+            if "confidence" not in data:
+                raise LLMError("classification has no 'confidence'; response is incomplete")
             try:
-                confidence = float(raw_confidence)
-            except (ValueError, TypeError):
-                logger.warning(f"Invalid confidence: {raw_confidence}")
-                confidence = 0.5
+                confidence = float(data["confidence"])
+            except (ValueError, TypeError) as e:
+                raise LLMError(f"non-numeric confidence {data['confidence']!r}") from e
 
             reasoning = data.get("reasoning", "")
             suggested_tags = data.get("suggested_tags", [])
