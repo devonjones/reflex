@@ -85,3 +85,87 @@ def test_the_set_matches_the_one_the_move_command_already_used():
     from reflex.services.bot import ReflexBot
 
     assert set(ReflexBot.VALID_CATEGORIES) == set(VALID_CATEGORIES)
+
+
+def _cascade(*payloads):
+    """A classifier whose successive LLM calls return `payloads` in order.
+
+    classify() is where this PR's behaviour change actually lives: tier 1
+    raising is now ROUTINE (any out-of-set category), so the catch-and-escalate
+    went from a rare path to a hot one, and tier 2 raising is a brand-new
+    terminal outcome. Neither was tested on this branch or on main.
+    """
+    c = ReflexClassifier("http://llm.test", "m1", "m2", 0.7, 0.6)
+    c.llm.client = mock.Mock()
+    c.llm.client.post.side_effect = [
+        httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(p)}, "finish_reason": "stop"}]},
+            request=httpx.Request("POST", "http://llm.test"),
+        )
+        for p in payloads
+    ]
+    return c
+
+
+class TestTheCascade:
+    def test_tier1_out_of_set_escalates_and_tier2_is_returned(self):
+        c = _cascade(
+            {"category": "urgent", "confidence": 0.9, "reasoning": "t1"},
+            {"category": "idea", "confidence": 0.9, "reasoning": "t2"},
+        )
+        assert c.classify("msg").category == "idea"
+        assert c.llm.client.post.call_count == 2
+
+    def test_tier2_also_failing_propagates_rather_than_filing(self):
+        """The one that matters.
+
+        A mutant wrapping the tier-2 call so an LLMError returns
+        category="inbox", confidence=0.5 passed all 17 tests -- this PR's exact
+        defect reinstated one level up. Raising drops the capture and shows the
+        user a visible failure, which is the right direction under
+        docs/agent-isolation.md: nothing is filed on a fabricated category.
+        """
+        c = _cascade(
+            {"category": "urgent", "confidence": 0.9, "reasoning": "t1"},
+            {"category": "alsobad", "confidence": 0.9, "reasoning": "t2"},
+        )
+        with pytest.raises(LLMError):
+            c.classify("msg")
+
+    def test_tier1_below_threshold_escalates(self):
+        """0.5 < 0.7, so tier 1's answer is not returned even though it is valid."""
+        c = _cascade(
+            {"category": "admin", "confidence": 0.5, "reasoning": "t1"},
+            {"category": "idea", "confidence": 0.95, "reasoning": "t2"},
+        )
+        assert c.classify("msg").category == "idea"
+        assert c.llm.client.post.call_count == 2
+
+    def test_tier1_at_or_above_threshold_short_circuits(self):
+        """The control: escalating always would also pass the tests above."""
+        c = _cascade({"category": "admin", "confidence": 0.7, "reasoning": "t1"})
+        assert c.classify("msg").category == "admin"
+        assert c.llm.client.post.call_count == 1, "tier 2 must not be called"
+
+
+class TestIntentValidationNeverInventsAConfidence:
+    """A fabricated confidence can EXECUTE a command, not just file a capture.
+
+    bot.py:477 runs `if is_command and confidence >= tier2_threshold`, and that
+    threshold comes from REFLEX_LLM_TIER2_CONFIDENCE_THRESHOLD (default 0.6).
+    The old default of 0.5 was below it only by coincidence of two
+    independently configured values.
+    """
+
+    def test_a_missing_confidence_is_refused(self):
+        c = _cascade({"is_command": True})
+        with pytest.raises(LLMError, match="confidence"):
+            c._validate_intent_single("move 3 to admin", "m1")
+
+    def test_is_command_still_defaults_closed(self):
+        """Absent is_command means 'not a command', which is the safe default."""
+        c = _cascade({"confidence": 0.95})
+        is_command, confidence = c._validate_intent_single("hello", "m1")
+        assert is_command is False
+        assert confidence == 0.95

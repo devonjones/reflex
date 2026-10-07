@@ -148,8 +148,21 @@ class ReflexClassifier:
             content = self.llm._get_content_from_response(result)
             data = json.loads(content)
 
+            # is_command defaults False, which fails CLOSED -- a truncated
+            # response becomes a capture, never a command. That is safe.
             is_command = bool(data.get("is_command", False))
-            raw_confidence = data.get("confidence", 0.5)
+            # confidence does NOT get a default. It was 0.5, which was safe only
+            # by a numeric coincidence between two independently configured env
+            # vars: bot.py:477 executes a command when
+            # `confidence >= tier2_threshold`, and that threshold is read from
+            # REFLEX_LLM_TIER2_CONFIDENCE_THRESHOLD (bot.py:239, default 0.6).
+            # Set it to 0.5 or below and a response that says is_command=true
+            # and truncates before `confidence` gets a fabricated 0.5 that
+            # clears the bar and EXECUTES. One guard here beats a comment
+            # explaining why 0.5 happens to sit under 0.6 today.
+            if "confidence" not in data:
+                raise LLMError("intent validation has no 'confidence'; response is incomplete")
+            raw_confidence = data["confidence"]
             try:
                 confidence = float(raw_confidence)
             except (ValueError, TypeError):
